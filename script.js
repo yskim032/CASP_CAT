@@ -1567,8 +1567,8 @@ class BayplanSimulator {
 
     populateHistoryForm() {
         const now = new Date();
-        const pad = n => String(n).padStart(2,'0');
-        const dateStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        const pad = n => String(n).padStart(2, '0');
+        const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
         document.getElementById('histDate').value = dateStr;
 
         const vessel = this.vessel || '---';
@@ -1599,33 +1599,112 @@ class BayplanSimulator {
 
     getHistory() {
         try { return JSON.parse(localStorage.getItem('bayplanHistory') || '[]'); }
-        catch(e) { return []; }
+        catch (e) { return []; }
     }
 
     saveHistory() {
         const record = {
-            id: Date.now(),
-            date:   document.getElementById('histDate').value,
+            id: this.editingHistId || Date.now(),
+            date: document.getElementById('histDate').value,
             vessel: document.getElementById('histVessel').value,
-            port:   document.getElementById('histPort').value,
-            dis:    document.getElementById('histDis').value,
-            lod:    document.getElementById('histLod').value,
-            twin:   document.getElementById('histTwin').value,
+            port: document.getElementById('histPort').value,
+            dis: document.getElementById('histDis').value,
+            lod: document.getElementById('histLod').value,
+            twin: document.getElementById('histTwin').value,
             restow: document.getElementById('histRestow').value,
-            berth:  document.getElementById('histBerth').value,
-            gang:   document.getElementById('histGang').value,
-            prod:   document.getElementById('histProd').value,
-            memo:   document.getElementById('histMemo').value,
+            berth: document.getElementById('histBerth').value,
+            gang: document.getElementById('histGang').value,
+            prod: document.getElementById('histProd').value,
+            memo: document.getElementById('histMemo').value,
+            // Include EDI data for loading later
+            disData: this.disContainers,
+            lodData: this.lodContainers,
+            vesselName: this.vessel,
+            voyageName: this.voyage
         };
 
-        if (!record.vessel) { alert('Please load EDI data before saving.'); return; }
-
         const history = this.getHistory();
-        history.unshift(record);
-        localStorage.setItem('bayplanHistory', JSON.stringify(history));
-        document.getElementById('histMemo').value = '';
-        this.renderHistoryTable();
-        alert('Record saved to local history!');
+        if (this.editingHistId) {
+            const idx = history.findIndex(h => h.id === this.editingHistId);
+            if (idx !== -1) {
+                // Retain data payload and just update editable fields
+                record.disData = history[idx].disData;
+                record.lodData = history[idx].lodData;
+                record.vesselName = history[idx].vesselName;
+                record.voyageName = history[idx].voyageName;
+                history[idx] = record;
+            }
+            this.editingHistId = null; // Clear edit mode
+        } else {
+            if (!record.vessel) { alert('Please load EDI data before saving.'); return; }
+            history.unshift(record);
+        }
+
+        try {
+            localStorage.setItem('bayplanHistory', JSON.stringify(history));
+            document.getElementById('histMemo').value = '';
+            this.renderHistoryTable();
+            alert('Record saved to local history!');
+        } catch (e) {
+            alert('Storage limit exceeded! Failed to save session data.');
+        }
+    }
+
+    editHistoryRecord(id) {
+        const history = this.getHistory();
+        const r = history.find(h => h.id === id);
+        if (!r) return;
+
+        this.editingHistId = id;
+        document.getElementById('histDate').value = r.date || '';
+        document.getElementById('histVessel').value = r.vessel || '';
+        document.getElementById('histPort').value = r.port || '';
+        document.getElementById('histDis').value = r.dis || '';
+        document.getElementById('histLod').value = r.lod || '';
+        document.getElementById('histTwin').value = r.twin || '';
+        document.getElementById('histRestow').value = r.restow || '';
+        document.getElementById('histBerth').value = r.berth || '';
+        document.getElementById('histGang').value = r.gang || '';
+        document.getElementById('histProd').value = r.prod || '';
+        document.getElementById('histMemo').value = r.memo || '';
+
+        // Scroll to form if needed
+        const histView = document.getElementById('historyView');
+        if (histView) histView.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    loadHistoryData(id) {
+        const history = this.getHistory();
+        const r = history.find(h => h.id === id);
+        if (!r || (!r.disData && !r.lodData)) {
+            alert("This record doesn't contain full EDI payloads to load.");
+            return;
+        }
+        if (!confirm('Load this session? Current unsaved work will be lost.')) return;
+
+        this.disContainers = r.disData || [];
+        this.lodContainers = r.lodData || [];
+        this.vessel = r.vesselName || '';
+        this.voyage = r.voyageName || '';
+        this.targetPort = r.port || '';
+
+        // Update UI controls
+        const targetSel = document.getElementById('targetPort');
+        if (targetSel && this.targetPort) targetSel.value = this.targetPort;
+
+        const vesselInfo = document.getElementById('vesselInfo');
+        if (vesselInfo) {
+            vesselInfo.textContent = (this.vessel && this.voyage) ? `${this.vessel} / ${this.voyage}` : 'NO DATA LOADED';
+        }
+
+        // Process data through simulator engine
+        this.processCombined();
+
+        // Switch back to General Stowage tab
+        const stowageTab = document.querySelector('.tab[data-tab="stowage"]');
+        if (stowageTab) stowageTab.click();
+
+        alert('Session loaded successfully!');
     }
 
     deleteHistoryRecord(id) {
@@ -1649,20 +1728,23 @@ class BayplanSimulator {
             const tr = document.createElement('tr');
             if (i % 2 === 1) tr.style.background = 'rgba(255,255,255,0.02)';
             tr.innerHTML = `
-                <td style="white-space:nowrap;font-size:11px;color:var(--text-secondary);">${r.date||'-'}</td>
-                <td style="font-weight:600;white-space:nowrap;">${r.vessel||'-'}</td>
-                <td style="text-align:center;">${r.port||'-'}</td>
-                <td style="text-align:center;color:#f59e0b;font-weight:bold;">${r.dis||'-'}</td>
-                <td style="text-align:center;color:#22c55e;font-weight:bold;">${r.lod||'-'}</td>
-                <td style="text-align:center;color:#ec4899;">${r.twin||'-'}</td>
-                <td style="text-align:center;color:#a855f7;">${r.restow||'-'}</td>
-                <td style="text-align:center;">${r.berth||'-'}</td>
-                <td style="text-align:center;">${r.gang||'-'}</td>
-                <td style="text-align:center;">${r.prod||'-'}</td>
-                <td style="color:var(--text-secondary);font-size:12px;">${r.memo||''}</td>
+                <td style="white-space:nowrap;font-size:11px;color:var(--text-secondary);">${r.date || '-'}</td>
+                <td style="font-weight:600;white-space:nowrap;">${r.vessel || '-'}</td>
+                <td style="text-align:center;">${r.port || '-'}</td>
+                <td style="text-align:center;color:#f59e0b;font-weight:bold;">${r.dis || '-'}</td>
+                <td style="text-align:center;color:#22c55e;font-weight:bold;">${r.lod || '-'}</td>
+                <td style="text-align:center;color:#ec4899;">${r.twin || '-'}</td>
+                <td style="text-align:center;color:#a855f7;">${r.restow || '-'}</td>
+                <td style="text-align:center;">${r.berth || '-'}</td>
+                <td style="text-align:center;">${r.gang || '-'}</td>
+                <td style="text-align:center;">${r.prod || '-'}</td>
+                <td style="color:var(--text-secondary);font-size:12px;">${r.memo || ''}</td>
                 <td style="text-align:center;">
-                    <button onclick="sim.deleteHistoryRecord(${r.id})"
-                        style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:2px 8px;border-radius:4px;cursor:pointer;font-size:11px;">x</button>
+                    <div style="display:flex;gap:5px;justify-content:center;">
+                        <button onclick="sim.loadHistoryData(${r.id})" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>
+                        <button onclick="sim.editHistoryRecord(${r.id})" title="Edit Memo/Values" style="background:#eab308;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Edit</button>
+                        <button onclick="sim.deleteHistoryRecord(${r.id})" title="Delete Record" style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕</button>
+                    </div>
                 </td>`;
             tbody.appendChild(tr);
         });
@@ -1671,14 +1753,14 @@ class BayplanSimulator {
     exportHistoryCSV() {
         const history = this.getHistory();
         if (history.length === 0) { alert('No history records to export.'); return; }
-        const headers = ['Date','Vessel/Voy','Port','D','L','Twin','Restow','Berth(h)','Gang','Productivity','Memo'];
-        const rows = history.map(r => [r.date,r.vessel,r.port,r.dis,r.lod,r.twin,r.restow,r.berth,r.gang,r.prod,r.memo]);
-        const csv = [headers,...rows].map(row => row.map(c => '"'+String(c||'').replace(/"/g,'""')+'"').join(',')).join('\n');
-        const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8;' });
+        const headers = ['Date', 'Vessel/Voy', 'Port', 'D', 'L', 'Twin', 'Restow', 'Berth(h)', 'Gang', 'Productivity', 'Memo'];
+        const rows = history.map(r => [r.date, r.vessel, r.port, r.dis, r.lod, r.twin, r.restow, r.berth, r.gang, r.prod, r.memo]);
+        const csv = [headers, ...rows].map(row => row.map(c => '"' + String(c || '').replace(/"/g, '""') + '"').join(',')).join('\n');
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'BayplanHistory_'+new Date().toISOString().slice(0,10)+'.csv';
+        a.download = 'BayplanHistory_' + new Date().toISOString().slice(0, 10) + '.csv';
         a.click();
         URL.revokeObjectURL(url);
     }
