@@ -61,6 +61,7 @@
                 <div class="tab" data-tab="recap">Recap & Statistics</div>
                 <div class="tab" data-tab="list">Container List</div>
                 <div class="tab" data-tab="simulation">Berth Simulation</div>
+                <div class="tab" data-tab="history" style="margin-left:auto;border-left:1px solid var(--glass-border);padding-left:18px;">&#128336; History</div>
             </div>
             <div id="vesselInfo" style="font-weight: 600; color: var(--accent-color);">NO DATA LOADED</div>
         </nav>
@@ -276,6 +277,108 @@
 
             <div id="gcAllocationChart" style="padding: 20px; background: var(--glass-bg); border-radius: 12px;">
                 <!-- GC allocation visualization -->
+            </div>
+        </section>
+
+        <!-- HISTORY VIEW -->
+        <section id="historyView" class="view-container hidden">
+            <!-- Save Panel -->
+            <div
+                style="background:rgba(255,255,255,0.03);border:1px solid var(--glass-border);border-radius:12px;padding:20px;margin-bottom:24px;">
+                <h3 style="color:var(--accent-color);margin-bottom:16px;font-size:15px;">&#128190; Save Current Session
+                </h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;">
+                    <div class="control-group" style="margin:0;">
+                        <label>Date</label>
+                        <input type="text" id="histDate" readonly
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Vessel / Voy</label>
+                        <input type="text" id="histVessel" placeholder="MSC GULSUN / FY618A"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Port</label>
+                        <input type="text" id="histPort" readonly
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Discharge (D)</label>
+                        <input type="number" id="histDis"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Load (L)</label>
+                        <input type="number" id="histLod"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Twin Pairs</label>
+                        <input type="number" id="histTwin"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Restow</label>
+                        <input type="number" id="histRestow"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Est. Berth Time (h)</label>
+                        <input type="text" id="histBerth" placeholder="-"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Gang (GC Count)</label>
+                        <input type="text" id="histGang" placeholder="-"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;">
+                        <label>Productivity</label>
+                        <input type="text" id="histProd" placeholder="-"
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                    <div class="control-group" style="margin:0;grid-column:span 2;">
+                        <label>Memo</label>
+                        <input type="text" id="histMemo" placeholder="Enter notes..."
+                            style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
+                    </div>
+                </div>
+                <div style="margin-top:16px;display:flex;gap:10px;">
+                    <button onclick="sim.saveHistory()"
+                        style="background:var(--accent-color);color:var(--bg-color);border:none;padding:10px 24px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:13px;">&#128190;
+                        Save Record</button>
+                    <button onclick="sim.exportHistoryCSV()"
+                        style="background:transparent;border:1px solid var(--accent-color);color:var(--accent-color);padding:10px 20px;border-radius:6px;font-weight:bold;cursor:pointer;font-size:13px;">&#11015;
+                        Export CSV</button>
+                    <button onclick="sim.clearHistory()"
+                        style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:10px 20px;border-radius:6px;cursor:pointer;font-size:13px;margin-left:auto;">&#128465;
+                        Clear All</button>
+                </div>
+            </div>
+            <!-- History Table -->
+            <div style="overflow:auto;">
+                <table class="list-table" id="historyTable" style="min-width:100%;">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Vessel / Voy</th>
+                            <th>Port</th>
+                            <th>D</th>
+                            <th>L</th>
+                            <th>Twin</th>
+                            <th>Restow</th>
+                            <th>Berth (h)</th>
+                            <th>Gang</th>
+                            <th>Prod.</th>
+                            <th>Memo</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        <!-- Rows injected by JS -->
+                    </tbody>
+                </table>
             </div>
         </section>
     </main>
