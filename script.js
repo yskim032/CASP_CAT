@@ -75,11 +75,7 @@ class BayplanSimulator {
             this.updateUI();
         }, 'fileNameLod');
 
-        // GC Count change
-        document.getElementById('gcCount').addEventListener('input', (e) => {
-            this.gcCount = parseInt(e.target.value) || 1;
-            this.refreshSimulation();
-        });
+        // GC Count listener removed since simulation view was removed.
 
         // Port change
         document.getElementById('targetPort').addEventListener('change', (e) => {
@@ -115,8 +111,12 @@ class BayplanSimulator {
             document.getElementById('bayModal').classList.add('hidden');
         });
 
-        // GC calculation
-                    this.optimizeGC();
+        // Simulation Calculation listeners
+        ['calcProd', 'calcGang', 'calcTargetBerth'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('input', () => this.updateSimulationCalc());
+            }
         });
 
         // Zoom functionality
@@ -137,10 +137,6 @@ class BayplanSimulator {
                 this.applyZoom(this.autoScale);
                 document.getElementById('zoomSlider').value = Math.round(this.autoScale * 100);
             }
-        });
-
-        // Analyze data
-                    this.updateUI();
         });
 
         // Keyboard navigation for Modal
