@@ -116,8 +116,7 @@ class BayplanSimulator {
         });
 
         // GC calculation
-        document.getElementById('calcGCBtn').addEventListener('click', () => {
-            this.optimizeGC();
+                    this.optimizeGC();
         });
 
         // Zoom functionality
@@ -141,8 +140,7 @@ class BayplanSimulator {
         });
 
         // Analyze data
-        document.getElementById('analyzeBtn').addEventListener('click', () => {
-            this.updateUI();
+                    this.updateUI();
         });
 
         // Keyboard navigation for Modal
