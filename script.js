@@ -1163,13 +1163,38 @@ class BayplanSimulator {
 
         const elBox = document.getElementById('kpiBoxCount');
         const elTwin = document.getElementById('kpiTwinCount');
-        const elActual = document.getElementById('kpiActualMoves');
+        const elActual = document.getElementById('kpiActualBoxes');
         if (elBox) elBox.textContent = totalBoxes;
         if (elTwin) elTwin.textContent = totalTwins;
         if (elActual) elActual.textContent = actualGCMoves;
 
         const elTotalMoves = document.getElementById('totalMoves');
         if (elTotalMoves) elTotalMoves.textContent = actualGCMoves;
+
+        this.updateSimulationCalc();
+    }
+
+    updateSimulationCalc() {
+        const totalBoxText = document.getElementById('kpiActualBoxes')?.textContent || '0';
+        const totalMoves = parseInt(totalBoxText) || 0;
+
+        const prod = parseFloat(document.getElementById('calcProd')?.value) || 1;
+        const gangs = parseFloat(document.getElementById('calcGang')?.value) || 1;
+        const targetHours = parseFloat(document.getElementById('calcTargetBerth')?.value) || 12;
+
+        if (totalMoves === 0) return;
+
+        let workTime = totalMoves / (prod * gangs);
+        let reqBerth = Math.round(workTime) + 2;
+
+        const effectiveHours = Math.max(targetHours - 2, 0.1);
+        const reqGangs = totalMoves / (prod * effectiveHours);
+
+        const outReqBerth = document.getElementById('outRequiredBerth');
+        if (outReqBerth) outReqBerth.textContent = reqBerth > 2 ? reqBerth + 'h' : '-';
+
+        const outReqGang = document.getElementById('outRequiredGang');
+        if (outReqGang) outReqGang.textContent = reqGangs > 0 ? Math.ceil(reqGangs) : '-';
     }
 
     refreshSimulation() {
