@@ -1606,14 +1606,14 @@ class BayplanSimulator {
         const restow = parseInt(document.getElementById('kpiRestowTotal')?.textContent) || 0;
         document.getElementById('histRestow').value = restow;
 
-        const berth = document.getElementById('estBerthTime')?.textContent || '';
-        document.getElementById('histBerth').value = (berth && berth !== '0h') ? berth : '';
+        const berth = document.getElementById('outRequiredBerth')?.textContent || '';
+        document.getElementById('histBerth').value = (berth && berth !== '-') ? berth : '';
 
-        const gang = document.getElementById('gcCount')?.value || '';
+        const gang = document.getElementById('calcGang')?.value || '';
         document.getElementById('histGang').value = gang;
 
-        const prod = document.getElementById('avgProductivity')?.textContent || '';
-        document.getElementById('histProd').value = (prod && prod !== '0') ? prod : '';
+        const prod = document.getElementById('calcProd')?.value || '';
+        document.getElementById('histProd').value = prod;
     }
 
     getHistory() {
