@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Premium EDI Bayplan Simulator</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <aside class="sidebar">
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 10v6M2 10v6M12 4v16M2 4h20M2 20h20"></path>
+            </svg>
+            GAIN SOLUTION
+        </div>
+
+        <div id="dropZoneDis" class="upload-area">
+            <p>Discharge Plan EDI (DIS)</p>
+            <p style="font-size: 11px; color: var(--text-secondary);">Drop File Here</p>
+            <div id="fileNameDis" style="font-size: 11px; margin-top: 5px;"></div>
+        </div>
+
+        <div id="dropZoneLod" class="upload-area">
+            <p>Load Plan EDI (LOD)</p>
+            <p style="font-size: 11px; color: var(--text-secondary);">Drop File Here</p>
+            <div id="fileNameLod" style="font-size: 11px; margin-top: 5px;"></div>
+        </div>
+
+
+        <div class="control-group">
+            <label>Target Port</label>
+            <select id="targetPort"
+                style="background: var(--glass-bg); border: 1px solid var(--glass-border); color: white; padding: 8px;">
+                <option value="KRPUS">KRPUS (Busan)</option>
+                <option value="KRKAN">KRKAN (Gwangyang)</option>
+                <option value="KRINC">KRINC (Incheon)</option>
+            </select>
+        </div>
+
+        <div class="control-group" style="margin-top: auto;">
+            <label>View Mode</label>
+            <div style="display: flex; gap: 5px;">
+                <button class="view-btn active" data-view="combined">Combined</button>
+                <button class="view-btn" data-view="dis">DIS</button>
+                <button class="view-btn" data-view="lod">LOD</button>
+            </div>
+        </div>
+    </aside>
+
+    <main class="main-content">
+        <nav class="top-bar">
+            <div class="tabs">
+                <div class="tab active" data-tab="stowage">General Stowage</div>
+                <div class="tab" data-tab="recap">Recap & Statistics</div>
+                <div class="tab" data-tab="list">Container List</div>
+                <div class="tab" data-tab="simulation">Berth Simulation</div>
+            </div>
+            <div id="vesselInfo" style="font-weight: 600; color: var(--accent-color);">NO DATA LOADED</div>
+        </nav>
+
+        <section id="stowageView" class="view-container">
+            <div id="generalStowageGrid" class="general-stowage">
+                <!-- Bays will be injected here -->
+            </div>
+        </section>
+
+        <section id="recapView" class="view-container hidden">
+            <div id="kpiHeader"
+                style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:20px; margin-bottom: 20px;">
+                <div class="kpi-card"
+                    style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 20px;">
+                    <h3 style="color: #f59e0b; margin-bottom: 5px; font-size: 14px; text-transform: uppercase;">
+                        Discharge Plan</h3>
+                    <div id="kpiDisTotal" style="font-size: 28px; font-weight: 800; color: white; margin-bottom: 10px;">
+                        0</div>
+                    <div style="display: flex; gap: 20px; font-size: 13px; color: var(--text-secondary);">
+                        <div>
+                            <strong style="color: white; font-size: 14px;">20'</strong> <br>
+                            <span style="color:#22c55e">F: <span id="kpiDis20F">0</span></span> <br>
+                            <span>E: <span id="kpiDis20E">0</span></span>
+                        </div>
+                        <div>
+                            <strong style="color: white; font-size: 14px;">40'</strong> <br>
+                            <span style="color:#22c55e">F: <span id="kpiDis40F">0</span></span> <br>
+                            <span>E: <span id="kpiDis40E">0</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="kpi-card"
+                    style="background: rgba(34, 197, 94, 0.1); border: 1px solid rgba(34, 197, 94, 0.3); border-radius: 12px; padding: 20px;">
+                    <h3 style="color: #22c55e; margin-bottom: 5px; font-size: 14px; text-transform: uppercase;">Load
+                        Plan</h3>
+                    <div id="kpiLodTotal" style="font-size: 28px; font-weight: 800; color: white; margin-bottom: 10px;">
+                        0</div>
+                    <div style="display: flex; gap: 20px; font-size: 13px; color: var(--text-secondary);">
+                        <div>
+                            <strong style="color: white; font-size: 14px;">20'</strong> <br>
+                            <span style="color:#22c55e">F: <span id="kpiLod20F">0</span></span> <br>
+                            <span>E: <span id="kpiLod20E">0</span></span>
+                        </div>
+                        <div>
+                            <strong style="color: white; font-size: 14px;">40'</strong> <br>
+                            <span style="color:#22c55e">F: <span id="kpiLod40F">0</span></span> <br>
+                            <span>E: <span id="kpiLod40E">0</span></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="kpi-card"
+                    style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 12px; padding: 20px; position: relative;">
+                    <h3 style="color: #38bdf8; margin-bottom: 5px; font-size: 14px; text-transform: uppercase;">Total
+                        Target Moves</h3>
+                    <div id="kpiGrandTotal"
+                        style="font-size: 28px; font-weight: 800; color: white; margin-bottom: 10px;">0</div>
+                    <div style="display: flex; gap: 20px; font-size: 13px; color: var(--text-secondary);">
+                        <div>
+                            <strong style="color: white; font-size: 14px;">20'</strong> <br>
+                            <span style="color:#22c55e">F: <span id="kpiTot20F">0</span></span> <br>
+                            <span>E: <span id="kpiTot20E">0</span></span>
+                        </div>
+                        <div>
+                            <strong style="color: white; font-size: 14px;">40'</strong> <br>
+                            <span style="color:#22c55e">F: <span id="kpiTot40F">0</span></span> <br>
+                            <span>E: <span id="kpiTot40E">0</span></span>
+                        </div>
+                    </div>
+                    <!-- RESTOW COUNT -->
+                    <div
+                        style="position: absolute; bottom: 20px; right: 20px; text-align: right; font-size: 12px; color: var(--text-secondary);">
+                        <strong
+                            style="color: #ec4899; font-size: 13px; display: block; margin-bottom: 2px;">RESTOW</strong>
+                        <span id="kpiRestowTotal" style="font-size: 20px; font-weight: 700; color: white;">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actual Moves (w/ Twins) Strip -->
+            <div
+                style="background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(56, 189, 248, 0.1)); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px 25px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center;">
+                <div
+                    style="font-size: 14px; color: var(--text-secondary); font-weight: 600; text-transform: uppercase;">
+                    <strong style="color: white; font-size: 16px;">Actual G/C Moves</strong> <span
+                        style="font-size: 12px; margin-left: 10px; opacity: 0.8;">(Twin Equivalent Calculated)</span>
+                </div>
+                <div
+                    style="font-size: 14px; font-weight: bold; color: var(--text-secondary); display: flex; align-items: center;">
+                    Total Boxes: <span id="kpiBoxCount"
+                        style="color: white; margin-left: 6px; font-size: 16px;">0</span>
+                    <span style="margin: 0 12px; color: #f59e0b; font-size: 16px;">-</span>
+                    Twin Pairs: <span id="kpiTwinCount"
+                        style="color: #f59e0b; margin-left: 6px; font-size: 16px;">0</span>
+                    <span style="margin: 0 15px; color: #22c55e; font-size: 18px;">=</span>
+                    <span id="kpiActualMoves" style="color: #22c55e; font-size: 28px; font-weight: 800;">0</span>
+                </div>
+            </div>
+
+            <!-- Horizontal Bay Summary -->
+            <div style="margin-top: 30px;">
+                <h4 style="color: var(--text-secondary); margin-bottom: 15px; font-size: 14px;">Moves per Bay</h4>
+                <div id="recapBaysContainer" class="bay-grid-table">
+                    <!-- Grid cells injected here -->
+                </div>
+            </div>
+
+            <!-- Bay Chart -->
+            <div style="margin-top: 30px;">
+                <h4 style="color: var(--text-secondary); margin-bottom: 15px; font-size: 14px;">Total Moves Distribution
+                </h4>
+                <div
+                    style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--glass-border); border-radius: 6px; padding: 20px;">
+                    <div id="bayChartBars"
+                        style="display: flex; gap: 8px; align-items: flex-end; height: 180px; padding-bottom: 1px; border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <!-- Chart bars injected here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bay Chart Twin Adjusted -->
+            <div style="margin-top: 20px;">
+                <h4 style="color: var(--text-secondary); margin-bottom: 15px; font-size: 14px;">
+                    Actual G/C Moves Distribution
+                    <span style="font-size: 11px; color: #a855f7; margin-left: 8px;">(Twin Applied)</span>
+                </h4>
+                <div
+                    style="background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(168,85,247,0.3); border-radius: 6px; padding: 20px;">
+                    <div id="bayChartBarsTwin"
+                        style="display: flex; gap: 8px; align-items: flex-end; height: 180px; padding-bottom: 1px; border-bottom: 1px solid rgba(168,85,247,0.2);">
+                        <!-- Twin-adjusted chart bars injected here -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- CONTAINER LIST VIEW -->
+        <section id="listView" class="view-container hidden">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <div style="display: flex; gap: 8px;">
+                    <button id="listTabDis" onclick="sim.switchListTab('dis')"
+                        style="padding: 6px 18px; background: rgba(245,158,11,0.2); border: 1px solid #f59e0b; border-radius: 4px; color: #f59e0b; font-weight: 700; cursor: pointer;">Discharge</button>
+                    <button id="listTabLod" onclick="sim.switchListTab('lod')"
+                        style="padding: 6px 18px; background: transparent; border: 1px solid var(--glass-border); border-radius: 4px; color: var(--text-secondary); cursor: pointer;">Load</button>
+                </div>
+                <button onclick="sim.exportExcel()"
+                    style="padding: 7px 18px; background: #22c55e; color: #000; border: none; border-radius: 4px; font-weight: 800; cursor: pointer; font-size: 13px;">⬇
+                    Export Excel</button>
+            </div>
+
+            <div id="listRecapContainer" style="margin-bottom: 16px;"></div>
+
+            <div style="overflow: auto; max-height: calc(100vh - 200px);">
+                <table class="list-table" id="containerListTable">
+                    <thead>
+                        <tr>
+                            <th onclick="sim.sortList('index')">#</th>
+                            <th onclick="sim.sortList('id')">CTR No.</th>
+                            <th onclick="sim.sortList('pos')">Position</th>
+                            <th onclick="sim.sortList('size')">Size</th>
+                            <th onclick="sim.sortList('type')">ISO Type</th>
+                            <th onclick="sim.sortList('pol')">POL</th>
+                            <th onclick="sim.sortList('pod')">POD</th>
+                            <th onclick="sim.sortList('fe')">F/E</th>
+                            <th onclick="sim.sortList('weight')">Weight</th>
+                            <th onclick="sim.sortList('dg')">DG</th>
+                            <th onclick="sim.sortList('temp')">Temp</th>
+                        </tr>
+                    </thead>
+                    <tbody id="containerListBody">
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="simulationView" class="view-container hidden">
+            <div class="sim-dashboard" style="margin-bottom: 20px;">
+                <div class="stat-card">
+                    <p style="color: var(--text-secondary);">Total Moves</p>
+                    <div id="totalMoves" class="stat-value">0</div>
+                </div>
+                <div class="stat-card">
+                    <p style="color: var(--text-secondary);">Estimated Berth Time</p>
+                    <div id="estBerthTime" class="stat-value">0h</div>
+                </div>
+                <div class="stat-card">
+                    <p style="color: var(--text-secondary);">Productivity (Moves/h)</p>
+                    <div id="avgProductivity" class="stat-value">0</div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 20px; margin-bottom: 20px; align-items: flex-end;">
+                <div class="control-group" style="flex: 1; margin: 0;">
+                    <label>Gantry Cranes (GC)</label>
+                    <input type="number" id="gcCount" value="3" min="1" max="10">
+                </div>
+                <div class="control-group" style="flex: 1; margin: 0;">
+                    <label>Target Berth Time (Hours)</label>
+                    <input type="number" id="targetBerthTime" placeholder="e.g. 12">
+                </div>
+                <div class="control-group" style="flex: 1; margin: 0; display: flex; gap: 10px;">
+                    <button id="calcGCBtn"
+                        style="flex: 1; background: transparent; border: 1px solid var(--accent-color); color: var(--accent-color); padding: 8px; border-radius: 4px; cursor: pointer;">Find
+                        Min GC</button>
+                    <button id="analyzeBtn"
+                        style="flex: 1; background: var(--accent-color); color: var(--bg-color); border: none; padding: 8px; border-radius: 4px; font-weight: bold; cursor: pointer;">Analyze
+                        EDI Data</button>
+                </div>
+            </div>
+
+
+            <div id="gcAllocationChart" style="padding: 20px; background: var(--glass-bg); border-radius: 12px;">
+                <!-- GC allocation visualization -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Detailed Bay Modal -->
+    <div id="bayModal" class="modal hidden">
+        <div class="modal-content">
+            <button id="closeModal" class="close-btn">✕</button>
+            <div class="zoom-controls">
+                <button id="zoomDefaultBtn"
+                    style="background:var(--accent-color); color:var(--bg-color); border:none; padding:2px 8px; border-radius:12px; font-weight:bold; font-size:10px; cursor:pointer;"
+                    title="Reset to Default Size">Default</button>
+                <input type="range" id="zoomSlider" min="20" max="250" value="100" title="Adjust Zoom">
+                <span id="zoomPercent" title="Reset to Fit">100%</span>
+            </div>
+            <div
+                style="display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 20px; position: relative; z-index: 10;">
+                <button class="nav-btn" onclick="window.sim.navigateBay(-1)">◀ Prev</button>
+                <h2 id="modalTitle" style="margin: 0;">BAY 00</h2>
+                <button class="nav-btn" onclick="window.sim.navigateBay(1)">Next ▶</button>
+            </div>
+            <div id="detailedBayGrid" class="detailed-bay">
+                <!-- 30x25 grids injected here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
