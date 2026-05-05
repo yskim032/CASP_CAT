@@ -1586,14 +1586,14 @@ class BayplanSimulator {
         const getTeuE = (g) =>
             g.s20E + (g.s40E + g.s40HE + g.s45E) * 2;
 
-        const portLabel = isAllOperatorHeader ? 'OPERATOR' : (mode === 'dis' ? 'POD' : 'POD (Next)');
+        const portLabel = mode === 'dis' ? 'POD' : 'POD (Next)';
         const th = (t, right) => `<th style="padding:5px 10px;text-align:${right ? 'right' : 'center'};color:var(--text-secondary);font-size:11px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,0.1);">${t}</th>`;
         const td = (v, accent, right) => `<td style="padding:4px 10px;text-align:${right ? 'right' : 'center'};font-size:11px;white-space:nowrap;${accent ? `color:${accent};font-weight:bold;` : ''}">${v}</td>`;
         const fmtCount = (f, e) => e > 0 ? `${f + e}(${e})` : `${f + e}`;
         const fmtTeu = (teu, teuE) => teuE > 0 ? `${teu}(${teuE})` : `${teu}`;
 
-        if (rows.length === 0 && !isAllOperatorHeader) return;
-        let html = `<div style="margin-top:${isAllOperatorHeader ? '0' : '20px'};"><div style="font-size:11px;font-weight:800;color:${filterColor};margin-bottom:6px;text-transform:uppercase;">${filterLabel}</div><div style="overflow-x:auto;"><table class="list-table" style="min-width:100%;border-radius:6px;background:rgba(0,0,0,0.15);margin-bottom:0;border-collapse:collapse;">
+        if (rows.length === 0) return;
+        let html = `<div style="margin-top:0;"><div style="font-size:11px;font-weight:800;color:${filterColor};margin-bottom:6px;text-transform:uppercase;">${filterLabel}</div><div style="overflow-x:auto;"><table class="list-table" style="min-width:100%;border-radius:6px;background:rgba(0,0,0,0.15);margin-bottom:0;border-collapse:collapse;">
             <thead style="background:rgba(255,255,255,0.06);">
                 <tr>
                     ${th(portLabel)}
