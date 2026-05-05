@@ -70,6 +70,8 @@ class BayplanSimulator {
         this.compMasterSort = { col: 'match', asc: false };
         this.compTargetSort = { col: 'match', asc: false };
 
+        this.highlightContainerId = null; // For Find feature
+
         this.initEventListeners();
     }
 
@@ -703,23 +705,31 @@ class BayplanSimulator {
 
 
     getAllVisibleContainers() {
-        if (this.viewMode === 'dis') return this.disContainers;
-        if (this.viewMode === 'lod') return this.lodContainers;
+        let dis = this.disContainers;
+        let lod = this.lodContainers;
 
-        // Combined logic: Only KRPUS load, KRPUS discharge, and Restow containers
+        // Operator filter: if a specific OPR is selected, restrict both lists
+        if (this.selectedOperator && this.selectedOperator !== 'ALL') {
+            dis = dis.filter(c => c.opr === this.selectedOperator);
+            lod = lod.filter(c => c.opr === this.selectedOperator);
+        }
+
+        if (this.viewMode === 'dis') return dis;
+        if (this.viewMode === 'lod') return lod;
+
+        // Combined logic: Only target-port discharge, loading, and Restow containers
         const combined = [];
 
-        this.disContainers.forEach(c => {
+        dis.forEach(c => {
             const pod = c.pod || c.port;
             if (c.isRestow || pod === this.targetPort) {
                 combined.push(c);
             }
         });
 
-        this.lodContainers.forEach(c => {
+        lod.forEach(c => {
             const pol = c.pol || c.port;
             if (c.isRestow) {
-                // Include restow's load position as well
                 combined.push(c);
             } else if (pol === this.targetPort) {
                 combined.push(c);
@@ -990,7 +1000,14 @@ class BayplanSimulator {
                 element.innerHTML = `<span style="font-size: 6px; transform: scale(0.8);">${found.size}</span>`;
                 const mappedType = this.getMappedType(found.type);
                 element.title = `${found.id} (${mappedType})\nPort: ${found.port}`;
-                if (found.dg) {
+                if (this.highlightContainerId && found.id === this.highlightContainerId) {
+                    // Strong red highlight for Find feature
+                    element.style.outline = '3px solid #ef4444';
+                    element.style.outlineOffset = '-2px';
+                    element.style.boxShadow = 'inset 0 0 6px rgba(239,68,68,0.6), 0 0 8px #ef4444';
+                    element.style.zIndex = '10';
+                    element.style.position = 'relative';
+                } else if (found.dg) {
                     element.style.outline = '2px solid #ef4444';
                     element.style.outlineOffset = '-2px';
                 } else if (found.temp !== null && found.temp !== undefined) {
@@ -1312,6 +1329,44 @@ class BayplanSimulator {
     }
 
     calcModeB() { this.autoCalcModeB(); }
+
+    switchSimMode(mode) {
+        const modeA = document.getElementById('simModeA');
+        const modeB = document.getElementById('simModeB');
+        const tabA = document.getElementById('modeTabA');
+        const tabB = document.getElementById('modeTabB');
+        if (!modeA || !modeB) return;
+
+        if (mode === 'A') {
+            modeA.style.display = 'grid';
+            modeB.style.display = 'none';
+            if (tabA) {
+                tabA.style.border = '1px solid var(--accent-color)';
+                tabA.style.background = 'rgba(234,179,8,0.18)';
+                tabA.style.color = 'var(--accent-color)';
+            }
+            if (tabB) {
+                tabB.style.border = '1px solid var(--glass-border)';
+                tabB.style.background = 'transparent';
+                tabB.style.color = 'var(--text-secondary)';
+            }
+            this.calcModeA();
+        } else {
+            modeA.style.display = 'none';
+            modeB.style.display = 'grid';
+            if (tabB) {
+                tabB.style.border = '1px solid #38bdf8';
+                tabB.style.background = 'rgba(56,189,248,0.15)';
+                tabB.style.color = '#38bdf8';
+            }
+            if (tabA) {
+                tabA.style.border = '1px solid var(--glass-border)';
+                tabA.style.background = 'transparent';
+                tabA.style.color = 'var(--text-secondary)';
+            }
+            this.autoCalcModeB();
+        }
+    }
 
     // Keep backward compat
     updateSimulationCalc() { this.calcModeA(); }
@@ -1923,6 +1978,113 @@ class BayplanSimulator {
     }
 
     // ─────────────────────────────────────────────────────
+    // FIND
+    // ─────────────────────────────────────────────────────
+    searchContainers() {
+        const raw = document.getElementById('findInput')?.value || '';
+        if (!raw.trim()) { alert('컨테이너 ID를 입력하세요.'); return; }
+
+        // Parse: split by newline, tab, comma — take first token of each line
+        const ids = raw.split(/[\n\r]+/)
+            .map(line => line.split(/[\t,]/)[0].trim().toUpperCase())
+            .filter(Boolean);
+
+        const disMap = new Map(this.disContainers.map(c => [c.id.toUpperCase(), c]));
+        const lodMap = new Map(this.lodContainers.map(c => [c.id.toUpperCase(), c]));
+
+        const body = document.getElementById('findResultBody');
+        const countEl = document.getElementById('findResultCount');
+        if (!body) return;
+        body.innerHTML = '';
+
+        let found = 0, notFound = 0;
+        ids.forEach((id, i) => {
+            const disC = disMap.get(id);
+            const lodC = lodMap.get(id);
+            const c = disC || lodC;
+
+            const tr = document.createElement('tr');
+            if (!c) {
+                notFound++;
+                tr.style.background = 'rgba(239,68,68,0.07)';
+                tr.innerHTML = `
+                    <td style="text-align:center;color:var(--text-secondary);">${i + 1}</td>
+                    <td style="font-family:monospace;font-weight:600;color:#ef4444;">${id}</td>
+                    <td colspan="9" style="color:#ef4444;font-size:12px;">NOT FOUND</td>`;
+            } else {
+                found++;
+                let statusLabel, statusColor;
+                if (disC && lodC) {
+                    statusLabel = 'DIS + LOD'; statusColor = '#ec4899';
+                } else if (disC) {
+                    statusLabel = 'DIS'; statusColor = '#f59e0b';
+                } else {
+                    statusLabel = 'LOD'; statusColor = '#22c55e';
+                }
+                const mappedType = this.getMappedType(c.type);
+                const fe = c.fullEmpty === 'F' ? 'FULL' : c.fullEmpty === 'E' ? 'EMPTY' : '-';
+                const feColor = c.fullEmpty === 'F' ? '#22c55e' : '#94a3b8';
+                const bayCode = c.pos ? c.pos.substring(0, 2) : null;
+
+                tr.innerHTML = `
+                    <td style="text-align:center;color:var(--text-secondary);">${i + 1}</td>
+                    <td style="font-family:monospace;font-weight:700;">${c.id}</td>
+                    <td style="text-align:center;font-weight:700;color:${statusColor};">${statusLabel}</td>
+                    <td style="text-align:center;">${bayCode
+                        ? `<span style="font-family:monospace;font-weight:700;color:#38bdf8;cursor:pointer;padding:3px 8px;border:1px solid rgba(56,189,248,0.4);border-radius:4px;display:inline-block;"
+                            onclick="window.sim.openBayWithHighlight('${c.id}')" title="Click to open bay detail">${c.pos}</span>`
+                        : '-'}</td>
+                    <td style="text-align:center;">${c.size}'</td>
+                    <td style="text-align:center;">${mappedType || '-'}</td>
+                    <td>${c.pol || c.port || '-'}</td>
+                    <td>${c.pod || '-'}</td>
+                    <td style="color:${feColor};font-weight:600;">${fe}</td>
+                    <td style="text-align:right;">${c.weight ? c.weight + ' T' : '-'}</td>
+                    <td style="text-align:center;color:var(--accent-color);font-weight:600;">${c.opr || '-'}</td>`;
+            }
+            body.appendChild(tr);
+        });
+
+        if (countEl) countEl.textContent = `${ids.length} IDs searched — Found: ${found}, Not found: ${notFound}`;
+    }
+
+    openBayWithHighlight(containerId) {
+        // Find the container in dis + lod
+        const upper = containerId.toUpperCase();
+        const c = this.disContainers.find(c => c.id.toUpperCase() === upper)
+            || this.lodContainers.find(c => c.id.toUpperCase() === upper);
+        if (!c || !c.pos) return;
+
+        const bayCode = c.pos.substring(0, 2);
+
+        // Set highlight target
+        this.highlightContainerId = c.id;
+
+        // Switch to General Stowage tab
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        const stowTab = document.querySelector('[data-tab="stowage"]');
+        if (stowTab) stowTab.classList.add('active');
+        document.querySelectorAll('.view-container').forEach(v => v.classList.add('hidden'));
+        const stowView = document.getElementById('stowageView');
+        if (stowView) stowView.classList.remove('hidden');
+
+        // Find the matching bay group in navigation list
+        let targetGroup = null;
+        if (this.bayGroupsForNavigation) {
+            targetGroup = this.bayGroupsForNavigation.find(g => g.includes(bayCode));
+        }
+        const openCodes = targetGroup || [bayCode];
+
+        // Open the bay detail modal with highlight
+        this.openDetailedBayGroup(openCodes);
+
+        // After modal renders, auto-show container info in the panel
+        setTimeout(() => {
+            const infoPanel = document.getElementById('ctrInfoPanel');
+            if (infoPanel && c) this.showContainerInfo(c, infoPanel);
+        }, 150);
+    }
+    // ─────────────────────────────────────────────────────
     // COMPARE
     // ─────────────────────────────────────────────────────
     _parseTSV(text) {
@@ -2002,11 +2164,38 @@ class BayplanSimulator {
     exportCompare() {
         if (!this.compMasterData.length && !this.compTargetData.length) { alert('Run COMPARE first.'); return; }
         if (typeof XLSX === 'undefined') { alert('SheetJS not loaded.'); return; }
-        const headers = ['Side', 'O/X', 'ID', 'A', 'B', 'C', 'D', 'E'];
-        const masterRows = this.compMasterData.map(r => ['MASTER', r.match ? 'O' : 'X', r.id, r.a, r.b, r.c, r.d, r.e]);
-        const sep = [['', '', '', '', '', '', '', '']];
-        const targetRows = this.compTargetData.map(r => ['TARGET', r.match ? 'O' : 'X', r.id, r.a, r.b, r.c, r.d, r.e]);
-        const ws = XLSX.utils.aoa_to_sheet([headers, ...masterRows, ...sep, ...targetRows]);
+
+        // Column layout: MASTER (cols 0-7) | GAP (col 8) | TARGET (cols 9-16)
+        const mHdr = ['[MASTER] O/X', '[MASTER] ID', '[MASTER] A', '[MASTER] B', '[MASTER] C', '[MASTER] D', '[MASTER] E'];
+        const tHdr = ['[TARGET] O/X', '[TARGET] ID', '[TARGET] A', '[TARGET] B', '[TARGET] C', '[TARGET] D', '[TARGET] E'];
+        const empty7 = Array(7).fill('');
+        const gap = [''];
+
+        const headerRow = [...mHdr, ...gap, ...tHdr];
+
+        const maxLen = Math.max(this.compMasterData.length, this.compTargetData.length);
+        const rows = [];
+        for (let i = 0; i < maxLen; i++) {
+            const m = this.compMasterData[i];
+            const t = this.compTargetData[i];
+            const mCells = m
+                ? [m.match ? 'O' : 'X', m.id, m.a, m.b, m.c, m.d, m.e]
+                : empty7;
+            const tCells = t
+                ? [t.match ? 'O' : 'X', t.id, t.a, t.b, t.c, t.d, t.e]
+                : empty7;
+            rows.push([...mCells, ...gap, ...tCells]);
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet([headerRow, ...rows]);
+
+        // Column widths
+        ws['!cols'] = [
+            { wch: 6 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, // MASTER
+            { wch: 2 },                                                          // GAP
+            { wch: 6 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, // TARGET
+        ];
+
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Compare Result');
         XLSX.writeFile(wb, `Compare_Result_${new Date().toISOString().slice(0, 10)}.xlsx`);
