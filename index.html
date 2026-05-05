@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 
 <body>
@@ -47,6 +48,14 @@
             </select>
         </div>
 
+        <div class="control-group">
+            <label>Operator</label>
+            <select id="operatorFilter"
+                style="background: var(--glass-bg); border: 1px solid var(--glass-border); color: white; padding: 8px; width: 100%;">
+                <option value="ALL">ALL Operators</option>
+            </select>
+        </div>
+
         <div class="control-group" style="margin-top: auto;">
             <label>View Mode</label>
             <div style="display: flex; gap: 5px;">
@@ -63,6 +72,7 @@
                 <div class="tab active" data-tab="stowage">General Stowage</div>
                 <div class="tab" data-tab="recap">Recap & Statistics</div>
                 <div class="tab" data-tab="list">Container List</div>
+                <div class="tab" data-tab="compare">Compare</div>
                 <div class="tab" data-tab="history"
                     style="margin-left:auto;border-left:1px solid var(--glass-border);padding-left:18px;">History</div>
             </div>
@@ -272,6 +282,7 @@
                         <tr>
                             <th onclick="sim.sortList('index')">#</th>
                             <th onclick="sim.sortList('id')">CTR No.</th>
+                            <th onclick="sim.sortList('opr')">OPR</th>
                             <th onclick="sim.sortList('pos')">Position</th>
                             <th onclick="sim.sortList('size')">Size</th>
                             <th onclick="sim.sortList('type')">ISO Type</th>
@@ -390,6 +401,107 @@
                 </table>
             </div>
         </section>
+
+        <!-- COMPARE VIEW -->
+        <section id="compareView" class="view-container hidden">
+            <h2 style="font-size: 16px; margin-bottom: 20px; color: var(--accent-color);">Compare Container Lists</h2>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; height: 160px; margin-bottom: 15px;">
+                <div style="display:flex;flex-direction:column;height:100%;">
+                    <label style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;font-weight:600;">Master
+                        List (Excel Paste)</label>
+                    <textarea id="masterListInput"
+                        placeholder="Paste Master List data here... (columns separated by Tab)&#10;Expected format: CTR No. | a | b | c | d | e"
+                        style="flex:1;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:6px;padding:10px;color:white;resize:none;font-family:monospace;font-size:11px;"></textarea>
+                </div>
+                <div style="display:flex;flex-direction:column;height:100%;">
+                    <label style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;font-weight:600;">Target
+                        List (Excel Paste)</label>
+                    <textarea id="targetListInput"
+                        placeholder="Paste Target List data here... (columns separated by Tab)&#10;Expected format: CTR No. | a | b | c | d | e"
+                        style="flex:1;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:6px;padding:10px;color:white;resize:none;font-family:monospace;font-size:11px;"></textarea>
+                </div>
+            </div>
+
+            <div
+                style="display:flex;justify-content:space-between;align-items:center;background:rgba(255,255,255,0.03);padding:15px;border-radius:10px;border:1px solid rgba(255,255,255,0.05);margin-bottom:20px;">
+                <div style="display:flex;gap:10px;align-items:center;">
+                    <button onclick="window.sim.compareLists()"
+                        style="background:#22c55e;color:white;border:none;padding:12px 30px;border-radius:8px;font-weight:bold;cursor:pointer;font-size:14px;box-shadow:0 4px 10px rgba(34,197,94,0.3);">&#9654;
+                        COMPARE</button>
+                    <button onclick="window.sim.clearCompare()"
+                        style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:12px 20px;border-radius:8px;font-weight:bold;cursor:pointer;font-size:14px;">&#128465;
+                        CLEAR DATA</button>
+                    <button onclick="window.sim.exportCompare()"
+                        style="background:transparent;border:1px solid var(--accent-color);color:var(--accent-color);padding:12px 20px;border-radius:8px;font-weight:bold;cursor:pointer;font-size:14px;">&#11015;
+                        Export XLSX</button>
+                </div>
+                <div style="display:flex;gap:30px;">
+                    <div style="text-align:center;">
+                        <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;">Master</div>
+                        <div id="compMasterCount" style="font-size:18px;font-weight:bold;color:white;">0</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;">Target</div>
+                        <div id="compTargetCount" style="font-size:18px;font-weight:bold;color:white;">0</div>
+                    </div>
+                    <div
+                        style="text-align:center;position:relative;padding:0 15px;border-left:1px solid var(--glass-border);border-right:1px solid var(--glass-border);">
+                        <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;">MATCH (O)
+                        </div>
+                        <div id="compMatchCount" style="font-size:18px;font-weight:bold;color:#22c55e;">0</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:10px;color:var(--text-secondary);text-transform:uppercase;">MISMATCH (X)
+                        </div>
+                        <div id="compMismatchCount" style="font-size:18px;font-weight:bold;color:#ef4444;">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div>
+                    <h3 style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Master Result</h3>
+                    <div style="overflow:auto;max-height:500px;">
+                        <table class="list-table" id="masterCompTable" style="min-width:100%;">
+                            <thead>
+                                <tr>
+                                    <th onclick="window.sim.sortCompTable('master', 'match')">O/X</th>
+                                    <th onclick="window.sim.sortCompTable('master', 'id')">ID</th>
+                                    <th>A</th>
+                                    <th>B</th>
+                                    <th>C</th>
+                                    <th>D</th>
+                                    <th>E</th>
+                                </tr>
+                            </thead>
+                            <tbody id="masterCompBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div>
+                    <h3 style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;">Target Result <span
+                            style="font-size:11px;color:#a855f7;font-weight:normal;">(Values synced from Master on
+                            Match)</span></h3>
+                    <div style="overflow:auto;max-height:500px;">
+                        <table class="list-table" id="targetCompTable" style="min-width:100%;">
+                            <thead>
+                                <tr>
+                                    <th onclick="window.sim.sortCompTable('target', 'match')">O/X</th>
+                                    <th onclick="window.sim.sortCompTable('target', 'id')">ID</th>
+                                    <th>A</th>
+                                    <th>B</th>
+                                    <th>C</th>
+                                    <th>D</th>
+                                    <th>E</th>
+                                </tr>
+                            </thead>
+                            <tbody id="targetCompBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </section>
+
     </main>
 
     <!-- Detailed Bay Modal -->

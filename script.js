@@ -4,7 +4,7 @@
 
 const ISO_TYPE_MAPPING = {
     // 20FT Containers
-    "2200": "20DV", "2210": "20DV", "22G0": "20DV", "22G1": "20DV",
+    "2200": "20DV", "2210": "20DV", "22G0": "20DV", "22G1": "20DV", "25G0": "20DV",
     "22T0": "20TK", "22T1": "20TK",
     "2232": "20RE", "22R0": "20RE", "22R1": "20RE",
     "22P1": "20FL", "22P0": "20FL",
@@ -16,7 +16,7 @@ const ISO_TYPE_MAPPING = {
 
     // 40FT Containers
     "42G0": "40DV", "4310": "40DV", "42G1": "40DV",
-    "45G0": "40HC", "4510": "40HC", "45G1": "40HC",
+    "45G0": "40HC", "4510": "40HC", "45G1": "40HC", "4500": "40HC",
     "45R0": "40HR", "4532": "40HR", "45R1": "40HR",
     "42P1": "40FL", "4363": "40FL", "42P0": "40FL",
     "42U1": "40OT", "42U0": "40OT",
@@ -59,6 +59,16 @@ class BayplanSimulator {
         this.gcCount = 3;
         this.targetPort = "KRPUS";
         this.viewMode = "combined"; // combined, dis, lod
+        this.selectedOperator = 'ALL';
+        this.operators = new Set();
+        this.currentListTab = 'dis';
+        this.listSortCol = 'index';
+        this.listSortAsc = true;
+
+        this.compMasterData = [];
+        this.compTargetData = [];
+        this.compMasterSort = { col: 'match', asc: false };
+        this.compTargetSort = { col: 'match', asc: false };
 
         this.initEventListeners();
     }
@@ -80,6 +90,12 @@ class BayplanSimulator {
         // Port change
         document.getElementById('targetPort').addEventListener('change', (e) => {
             this.targetPort = e.target.value;
+            this.updateUI();
+        });
+
+        const oprFilter = document.getElementById('operatorFilter');
+        if (oprFilter) oprFilter.addEventListener('change', (e) => {
+            this.selectedOperator = e.target.value;
             this.updateUI();
         });
 
@@ -111,12 +127,16 @@ class BayplanSimulator {
             document.getElementById('bayModal').classList.add('hidden');
         });
 
-        // Simulation Calculation listeners
-        ['calcProd', 'calcGang', 'calcTargetBerth'].forEach(id => {
+        // Simulation Calculation listeners (MODE A)
+        ['calcProd', 'calcGang'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) {
-                el.addEventListener('input', () => this.updateSimulationCalc());
-            }
+            if (el) el.addEventListener('input', () => this.calcModeA());
+        });
+
+        // Simulation Calculation listeners (MODE B)
+        ['calcBProd', 'calcBGang', 'calcTargetBerth'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', () => this.autoCalcModeB());
         });
 
         // Zoom functionality
@@ -349,6 +369,17 @@ class BayplanSimulator {
         // Push the last container
         if (currentContainer) containers.push(currentContainer);
 
+        // Extract operator code from NAD+CA segment (applied globally to all containers)
+        let shipOperator = '';
+        segments.forEach(rawSeg => {
+            const seg = rawSeg.trim();
+            const parts = seg.split('+');
+            if (parts[0] === 'NAD' && (parts[1] || '').trim() === 'CA') {
+                shipOperator = (parts[2] || '').split(':')[0].trim();
+            }
+        });
+        if (shipOperator) containers.forEach(c => { if (!c.opr) c.opr = shipOperator; });
+
         // Return everything that has a valid 6-digit position
         const valid = containers.filter(c => c.pos && c.pos.length === 6 && /^\d{6}$/.test(c.pos));
         console.log(`[parseEDI] total segments: ${segments.length}, containers found: ${containers.length}, valid: ${valid.length}`);
@@ -357,9 +388,26 @@ class BayplanSimulator {
 
     updateUI() {
         this.processRestows();
+        this.updateOperatorList();
         this.renderGeneralStowage();
         this.renderRecap();
-        this.refreshSimulation();
+        if (this.currentListTab) this.renderContainerList(this.currentListTab);
+    }
+
+    updateOperatorList() {
+        const s = new Set();
+        [...this.disContainers, ...this.lodContainers].forEach(c => { if (c.opr) s.add(c.opr); });
+        this.operators = s;
+        const sel = document.getElementById('operatorFilter');
+        if (!sel) return;
+        const cur = sel.value;
+        sel.innerHTML = '<option value="ALL">ALL Operators</option>';
+        Array.from(s).sort().forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o; opt.textContent = o; sel.appendChild(opt);
+        });
+        if (Array.from(s).includes(cur)) sel.value = cur;
+        else { sel.value = 'ALL'; this.selectedOperator = 'ALL'; }
     }
 
     processRestows() {
@@ -1174,28 +1222,53 @@ class BayplanSimulator {
         this.updateSimulationCalc();
     }
 
-    updateSimulationCalc() {
-        const totalBoxText = document.getElementById('kpiActualBoxes')?.textContent || '0';
-        const totalMoves = parseInt(totalBoxText) || 0;
-
-        const prod = parseFloat(document.getElementById('calcProd')?.value) || 1;
-        const gangs = parseFloat(document.getElementById('calcGang')?.value) || 1;
-        const targetHours = parseFloat(document.getElementById('calcTargetBerth')?.value) || 12;
-
-        if (totalMoves === 0) return;
-
-        let workTime = totalMoves / (prod * gangs);
-        let reqBerth = Math.round(workTime) + 2;
-
-        const effectiveHours = Math.max(targetHours - 2, 0.1);
-        const reqGangs = totalMoves / (prod * effectiveHours);
-
-        const outReqBerth = document.getElementById('outRequiredBerth');
-        if (outReqBerth) outReqBerth.textContent = reqBerth > 2 ? reqBerth + 'h' : '-';
-
-        const outReqGang = document.getElementById('outRequiredGang');
-        if (outReqGang) outReqGang.textContent = reqGangs > 0 ? Math.ceil(reqGangs) : '-';
+    // MODE A: Prod + Gangs → Est. Berth Time
+    calcModeA() {
+        const totalMoves = parseInt(document.getElementById('kpiActualBoxes')?.textContent) || 0;
+        const prod = parseFloat(document.getElementById('calcProd')?.value);
+        const gangs = parseFloat(document.getElementById('calcGang')?.value);
+        const outBerth = document.getElementById('outRequiredBerth');
+        if (!outBerth) return;
+        if (!totalMoves || !prod || !gangs || prod <= 0 || gangs <= 0) { outBerth.textContent = '-'; return; }
+        const berthTime = Math.round(totalMoves / (prod * gangs)) + 2;
+        outBerth.textContent = berthTime + 'h';
     }
+
+    // MODE B: real-time auto-calc
+    autoCalcModeB() {
+        const totalMoves = parseInt(document.getElementById('kpiActualBoxes')?.textContent) || 0;
+        const targetBerth = parseFloat(document.getElementById('calcTargetBerth')?.value);
+        const bProdVal = document.getElementById('calcBProd')?.value.trim();
+        const bGangVal = document.getElementById('calcBGang')?.value.trim();
+        const bProd = parseFloat(bProdVal);
+        const bGang = parseFloat(bGangVal);
+        const outResult = document.getElementById('outRequiredGang');
+        const outSubLbl = document.getElementById('outRequiredProd');
+        if (!outResult) return;
+        if (!totalMoves || !targetBerth || targetBerth <= 2) {
+            outResult.textContent = '-';
+            if (outSubLbl) outSubLbl.textContent = 'Target Berth Time이 2h 초과여야 합니다.';
+            return;
+        }
+        const effectiveHours = targetBerth - 2;
+        const hasProd = bProdVal !== '' && !isNaN(bProd) && bProd > 0;
+        const hasGang = bGangVal !== '' && !isNaN(bGang) && bGang > 0;
+        if (hasProd && !hasGang) {
+            outResult.textContent = Math.ceil(totalMoves / (bProd * effectiveHours)) + ' Gang(s)';
+            if (outSubLbl) outSubLbl.textContent = `Productivity ${bProd} mvs/hr 기준`;
+        } else if (!hasProd && hasGang) {
+            outResult.textContent = (totalMoves / (bGang * effectiveHours)).toFixed(1) + ' mvs/hr/gang';
+            if (outSubLbl) outSubLbl.textContent = `${bGang} Gang(s) 기준 필요 생산성`;
+        } else {
+            outResult.textContent = '-';
+            if (outSubLbl) outSubLbl.textContent = hasProd && hasGang ? '⚠ 하나만 입력하세요' : 'Productivity 또는 Gangs를 입력하세요.';
+        }
+    }
+
+    calcModeB() { this.autoCalcModeB(); }
+
+    // Keep backward compat
+    updateSimulationCalc() { this.calcModeA(); }
 
     refreshSimulation() {
         const totalMoves = parseInt(document.getElementById('totalMoves').textContent) || 0;
@@ -1308,15 +1381,15 @@ class BayplanSimulator {
     }
 
     renderContainerList(mode) {
-        let list = mode === 'dis' ? [...this.disContainers] : [...this.lodContainers];
-        // Filter strictly to current operational moves
-        if (mode === 'dis') {
-            list = list.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
-        } else {
-            list = list.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
-        }
+        let fullList = mode === 'dis' ? [...this.disContainers] : [...this.lodContainers];
+        if (mode === 'dis') fullList = fullList.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
+        else fullList = fullList.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
 
-        this.renderListRecap(list, mode);
+        // Recap with ALL operators
+        this.renderListRecap(fullList, mode, true);
+        // Recap with SELECTED operator (skip if ALL)
+        let list = (this.selectedOperator === 'ALL') ? fullList : fullList.filter(c => c.opr === this.selectedOperator);
+        if (this.selectedOperator !== 'ALL') this.renderListRecap(list, mode, false);
 
         // Apply sorting before rendering
         if (this.listSortCol && this.listSortCol !== 'index') {
@@ -1324,6 +1397,7 @@ class BayplanSimulator {
                 let valA, valB;
                 switch (this.listSortCol) {
                     case 'id': valA = a.id || ''; valB = b.id || ''; break;
+                    case 'opr': valA = a.opr || ''; valB = b.opr || ''; break;
                     case 'pos': valA = a.pos || ''; valB = b.pos || ''; break;
                     case 'size': valA = a.size || 0; valB = b.size || 0; break;
                     case 'type': valA = this.getMappedType(a.type) || ''; valB = this.getMappedType(b.type) || ''; break;
@@ -1389,6 +1463,7 @@ class BayplanSimulator {
             tr.innerHTML = `
                 <td style="text-align:center;color:var(--text-secondary);">${i + 1}</td>
                 <td style="font-weight:700;">${c.id || '-'}</td>
+                <td style="text-align:center;color:var(--accent-color);font-weight:700;">${c.opr || '-'}</td>
                 <td style="text-align:center;font-family:monospace;">${c.pos || '-'}</td>
                 <td style="text-align:center;">${c.size}'</td>
                 <td style="text-align:center;">${mappedType || '-'}</td>
@@ -1403,24 +1478,16 @@ class BayplanSimulator {
         });
     }
 
-    renderListRecap(list, mode) {
+    renderListRecap(list, mode, isAllOperatorHeader) {
         const container = document.getElementById('listRecapContainer');
         if (!container) return;
+        if (isAllOperatorHeader) container.innerHTML = '';
 
-        // Strictly re-filter: only containers whose POD (dis) or POL (lod) equals targetPort
-        if (mode === 'dis') {
-            list = list.filter(c => c.pod === this.targetPort);
-        } else {
-            list = list.filter(c => (c.pol || c.port) === this.targetPort);
-        }
-
-        if (list.length === 0) { container.innerHTML = ''; return; }
-
-        // For discharge: group by POD; For load: group by POD (next dest)
-        const getGroupKey = (c) => {
-            if (mode === 'dis') return c.pod || c.port || '-';
-            else return c.pod || '-'; // next destination for loaded cargo
-        };
+        const filterLabel = isAllOperatorHeader ? 'ALL OPERATORS SUMMARY' : `SELECTED OPERATOR: ${this.selectedOperator}`;
+        const filterColor = isAllOperatorHeader ? '#38bdf8' : '#a855f7';
+        const getGroupKey = (c) => isAllOperatorHeader
+            ? (c.opr || '-')
+            : (mode === 'dis' ? (c.pod || c.port || '-') : (c.pod || '-'));
 
         // Helper: is this container a 40' High Cube?
         const is40HC = (c) => {
@@ -1469,13 +1536,14 @@ class BayplanSimulator {
         const getTeuE = (g) =>
             g.s20E + (g.s40E + g.s40HE + g.s45E) * 2;
 
-        const portLabel = mode === 'dis' ? 'POD' : 'POD (Next)';
+        const portLabel = isAllOperatorHeader ? 'OPERATOR' : (mode === 'dis' ? 'POD' : 'POD (Next)');
         const th = (t, right) => `<th style="padding:5px 10px;text-align:${right ? 'right' : 'center'};color:var(--text-secondary);font-size:11px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,0.1);">${t}</th>`;
         const td = (v, accent, right) => `<td style="padding:4px 10px;text-align:${right ? 'right' : 'center'};font-size:11px;white-space:nowrap;${accent ? `color:${accent};font-weight:bold;` : ''}">${v}</td>`;
         const fmtCount = (f, e) => e > 0 ? `${f + e}(${e})` : `${f + e}`;
         const fmtTeu = (teu, teuE) => teuE > 0 ? `${teu}(${teuE})` : `${teu}`;
 
-        let html = `<div style="overflow-x:auto;"><table class="list-table" style="min-width:100%;border-radius:6px;background:rgba(0,0,0,0.15);margin-bottom:0;border-collapse:collapse;">
+        if (rows.length === 0 && !isAllOperatorHeader) return;
+        let html = `<div style="margin-top:${isAllOperatorHeader ? '0' : '20px'};"><div style="font-size:11px;font-weight:800;color:${filterColor};margin-bottom:6px;text-transform:uppercase;">${filterLabel}</div><div style="overflow-x:auto;"><table class="list-table" style="min-width:100%;border-radius:6px;background:rgba(0,0,0,0.15);margin-bottom:0;border-collapse:collapse;">
             <thead style="background:rgba(255,255,255,0.06);">
                 <tr>
                     ${th(portLabel)}
@@ -1535,49 +1603,63 @@ class BayplanSimulator {
                 ${td(fmtTeu(totTeu, totTeuE), '#fff')}
                 ${td(totWgt > 0 ? totWgt.toFixed(1) : '-', null, true)}
             </tr>
-            </tbody></table></div>`;
+            </tbody></table></div></div>`;
 
-        container.innerHTML = html;
+        container.innerHTML += html;
     }
 
     exportExcel() {
         const mode = this.currentListTab || 'dis';
-        let list = mode === 'dis' ? this.disContainers : this.lodContainers;
-        // Filter strictly to current operational moves
-        if (mode === 'dis') {
-            list = list.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
-        } else {
-            list = list.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
-        }
-        const label = mode === 'dis' ? 'Discharge' : 'Load';
+        let fullList = mode === 'dis' ? this.disContainers : this.lodContainers;
+        if (mode === 'dis') fullList = fullList.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
+        else fullList = fullList.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
 
-        const headers = ['#', 'CTR No.', 'Position', 'Size', 'ISO Type', 'POL', 'POD', 'F/E', 'Weight(T)', 'DG', 'Temp(C)'];
+        let list = this.selectedOperator === 'ALL' ? fullList : fullList.filter(c => c.opr === this.selectedOperator);
+        const label = mode === 'dis' ? 'Discharge' : 'Load';
+        const headers = ['#', 'CTR No.', 'OPR', 'Position', 'Size', 'ISO Type', 'POL', 'POD', 'F/E', 'Weight(T)', 'DG', 'Temp(C)'];
         const rows = list.map((c, i) => [
-            i + 1,
-            c.id || '',
-            c.pos || '',
-            c.size + "'",
-            this.getMappedType(c.type) || '',
-            c.pol || c.port || '',
-            c.pod || '',
+            i + 1, c.id || '', c.opr || '', c.pos || '', c.size + "'",
+            this.getMappedType(c.type) || '', c.pol || c.port || '', c.pod || '',
             c.fullEmpty === 'F' ? 'FULL' : c.fullEmpty === 'E' ? 'EMPTY' : '',
-            c.weight || '',
-            c.dg || '',
+            c.weight || '', c.dg || '',
             (c.temp !== undefined && c.temp !== null && c.temp !== '') ? c.temp : ''
         ]);
 
-        const csvContent = [headers, ...rows]
-            .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
-            .join('\n');
+        // RECAP rows (ALL operators - by operator)
+        const recapHeaders = ['OPERATOR', "20'(E)", "40'(E)", "40H'(E)", "45'(E)", 'RF', 'DG', 'TTL', 'TEU', 'WEIGHT(T)'];
+        const is40HC = (c) => { const t = this.getMappedType(c.type) || ''; return c.size === 40 && (t.includes('HC') || t.includes('HQ') || t.includes('HT')); };
+        const oprGroups = {};
+        fullList.forEach(c => {
+            const k = c.opr || '-';
+            if (!oprGroups[k]) oprGroups[k] = { s20F: 0, s20E: 0, s40F: 0, s40E: 0, s40HF: 0, s40HE: 0, s45F: 0, s45E: 0, rf: 0, dg: 0, wgt: 0 };
+            const g = oprGroups[k]; const isFull = c.fullEmpty !== 'E';
+            if (c.size === 20) { isFull ? g.s20F++ : g.s20E++; }
+            else if (c.size === 45) { isFull ? g.s45F++ : g.s45E++; }
+            else if (is40HC(c)) { isFull ? g.s40HF++ : g.s40HE++; }
+            else { isFull ? g.s40F++ : g.s40E++; }
+            if (c.temp !== undefined && c.temp !== null && c.temp !== '') g.rf++;
+            if (c.dg) g.dg++;
+            if (c.weight) g.wgt += parseFloat(c.weight);
+        });
+        const recapRows = Object.entries(oprGroups).sort(([a], [b]) => a.localeCompare(b)).map(([k, g]) => {
+            const ttl = g.s20F + g.s20E + g.s40F + g.s40E + g.s40HF + g.s40HE + g.s45F + g.s45E;
+            const teu = (g.s20F + g.s20E) + (g.s40F + g.s40E + g.s40HF + g.s40HE + g.s45F + g.s45E) * 2;
+            return [k, `${g.s20F + g.s20E}(${g.s20E})`, `${g.s40F + g.s40E}(${g.s40E})`,
+                `${g.s40HF + g.s40HE}(${g.s40HE})`, `${g.s45F + g.s45E}(${g.s45E})`,
+                g.rf, g.dg, ttl, teu, g.wgt.toFixed(1)];
+        });
 
-        const bom = '\uFEFF'; // UTF-8 BOM for Excel
-        const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${this.vessel}_${label}_List.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+        // Build XLSX workbook with SheetJS
+        if (typeof XLSX === 'undefined') { alert('SheetJS not loaded.'); return; }
+        const wb = XLSX.utils.book_new();
+        const wsData = [headers, ...rows];
+        const ws = XLSX.utils.aoa_to_sheet(wsData);
+        XLSX.utils.book_append_sheet(wb, ws, label + ' List');
+
+        const wsRecap = XLSX.utils.aoa_to_sheet([[`SELECTED OPERATOR: ALL`], recapHeaders, ...recapRows]);
+        XLSX.utils.book_append_sheet(wb, wsRecap, 'RECAP');
+
+        XLSX.writeFile(wb, `${this.vessel}_${label}_${this.targetPort}.xlsx`);
     }
 
     // ─────────────────────────────────────────────────────
@@ -1788,6 +1870,128 @@ class BayplanSimulator {
         if (!confirm('Delete ALL history records? This cannot be undone.')) return;
         localStorage.removeItem('bayplanHistory');
         this.renderHistoryTable();
+    }
+
+    // ─────────────────────────────────────────────────────
+    // COMPARE
+    // ─────────────────────────────────────────────────────
+    _parseTSV(text) {
+        return text.trim().split('\n')
+            .map(line => line.trim())
+            .filter(Boolean)
+            .map(line => {
+                const cols = line.split('\t');
+                return {
+                    id: (cols[0] || '').trim(),
+                    a: (cols[1] || '').trim(),
+                    b: (cols[2] || '').trim(),
+                    c: (cols[3] || '').trim(),
+                    d: (cols[4] || '').trim(),
+                    e: (cols[5] || '').trim()
+                };
+            });
+    }
+
+    compareLists() {
+        const masterRaw = document.getElementById('masterListInput')?.value || '';
+        const targetRaw = document.getElementById('targetListInput')?.value || '';
+        if (!masterRaw.trim() || !targetRaw.trim()) { alert('Please paste both Master and Target lists.'); return; }
+
+        const masterList = this._parseTSV(masterRaw);
+        const targetList = this._parseTSV(targetRaw);
+
+        const targetMap = new Map(targetList.map(r => [r.id, r]));
+        const masterMap = new Map(masterList.map(r => [r.id, r]));
+
+        const masterData = masterList.map(r => {
+            const match = targetMap.has(r.id);
+            return { ...r, match };
+        });
+
+        const targetData = targetList.map(r => {
+            const match = masterMap.has(r.id);
+            if (match) {
+                const master = masterMap.get(r.id);
+                return { id: r.id, a: master.a, b: master.b, c: master.c, d: master.d, e: master.e, match: true };
+            }
+            return { ...r, match: false };
+        });
+
+        this.compMasterData = masterData;
+        this.compTargetData = targetData;
+        this.compMasterSort = { col: 'match', asc: false };
+        this.compTargetSort = { col: 'match', asc: false };
+
+        const matchCount = masterData.filter(r => r.match).length;
+        const mismatchCount = masterData.filter(r => !r.match).length + targetData.filter(r => !r.match).length;
+
+        document.getElementById('compMasterCount').textContent = masterData.length;
+        document.getElementById('compTargetCount').textContent = targetData.length;
+        document.getElementById('compMatchCount').textContent = matchCount;
+        document.getElementById('compMismatchCount').textContent = mismatchCount;
+
+        this._renderCompTable('master');
+        this._renderCompTable('target');
+    }
+
+    clearCompare() {
+        const masterIn = document.getElementById('masterListInput');
+        const targetIn = document.getElementById('targetListInput');
+        if (masterIn) masterIn.value = '';
+        if (targetIn) targetIn.value = '';
+        this.compMasterData = [];
+        this.compTargetData = [];
+        document.getElementById('masterCompBody').innerHTML = '';
+        document.getElementById('targetCompBody').innerHTML = '';
+        document.getElementById('compMasterCount').textContent = '0';
+        document.getElementById('compTargetCount').textContent = '0';
+        document.getElementById('compMatchCount').textContent = '0';
+        document.getElementById('compMismatchCount').textContent = '0';
+    }
+
+    exportCompare() {
+        if (!this.compMasterData.length && !this.compTargetData.length) { alert('Run COMPARE first.'); return; }
+        if (typeof XLSX === 'undefined') { alert('SheetJS not loaded.'); return; }
+        const headers = ['Side', 'O/X', 'ID', 'A', 'B', 'C', 'D', 'E'];
+        const masterRows = this.compMasterData.map(r => ['MASTER', r.match ? 'O' : 'X', r.id, r.a, r.b, r.c, r.d, r.e]);
+        const sep = [['', '', '', '', '', '', '', '']];
+        const targetRows = this.compTargetData.map(r => ['TARGET', r.match ? 'O' : 'X', r.id, r.a, r.b, r.c, r.d, r.e]);
+        const ws = XLSX.utils.aoa_to_sheet([headers, ...masterRows, ...sep, ...targetRows]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Compare Result');
+        XLSX.writeFile(wb, `Compare_Result_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    }
+
+    sortCompTable(side, col) {
+        const sortObj = side === 'master' ? this.compMasterSort : this.compTargetSort;
+        if (sortObj.col === col) sortObj.asc = !sortObj.asc;
+        else { sortObj.col = col; sortObj.asc = true; }
+        this._renderCompTable(side);
+    }
+
+    _renderCompTable(side) {
+        const data = side === 'master' ? [...this.compMasterData] : [...this.compTargetData];
+        const sortObj = side === 'master' ? this.compMasterSort : this.compTargetSort;
+        const bodyId = side === 'master' ? 'masterCompBody' : 'targetCompBody';
+        const body = document.getElementById(bodyId);
+        if (!body) return;
+        data.sort((a, b) => {
+            let va, vb;
+            if (sortObj.col === 'match') { va = a.match ? 1 : 0; vb = b.match ? 1 : 0; }
+            else { va = (a[sortObj.col] || '').toLowerCase(); vb = (b[sortObj.col] || '').toLowerCase(); }
+            if (va < vb) return sortObj.asc ? -1 : 1;
+            if (va > vb) return sortObj.asc ? 1 : -1;
+            return 0;
+        });
+        body.innerHTML = data.map(r => {
+            const bg = r.match ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.12)';
+            const color = r.match ? '#22c55e' : '#ef4444';
+            return `<tr style="background:${bg};">
+                <td style="text-align:center;font-weight:bold;font-size:13px;color:${color};">${r.match ? 'O' : 'X'}</td>
+                <td style="font-family:monospace;font-weight:600;">${r.id}</td>
+                <td>${r.a}</td><td>${r.b}</td><td>${r.c}</td><td>${r.d}</td><td>${r.e}</td>
+            </tr>`;
+        }).join('');
     }
 
 }
