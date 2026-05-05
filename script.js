@@ -318,15 +318,25 @@ class BayplanSimulator {
 
                 } else if (locType === '9') {
                     if (currentContainer) {
-                        const portCode = (parts[2] || '').split(':')[0].trim();
+                        let portCode = (parts[2] || '').split(':')[0].trim();
+                        // Normalize known typos/aliases
+                        if (portCode === 'KRBUS') portCode = 'KRPUS';
                         currentContainer.pol = portCode;
                         const krPorts = ['KRPUS', 'KRKAN', 'KRINC'];
                         if (krPorts.includes(portCode)) currentContainer.port = portCode;
                         else if (!currentContainer.port) currentContainer.port = portCode;
                     }
-                } else if (locType === '11') {
+                } else if (locType === '11' || locType === '12') {
+                    // LOC+11 = Next port of discharge (BAPLIE 2.x)
+                    // LOC+12 = Final destination (some carriers use this for POD)
                     if (currentContainer) {
-                        currentContainer.pod = (parts[2] || '').split(':')[0].trim();
+                        let pod = (parts[2] || '').split(':')[0].trim();
+                        // Normalize known typos/aliases
+                        if (pod === 'KRBUS') pod = 'KRPUS';
+                        // Only set pod if not already set by LOC+11
+                        if (!currentContainer.pod || locType === '11') {
+                            currentContainer.pod = pod;
+                        }
                     }
                 }
             }
