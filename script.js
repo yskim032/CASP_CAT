@@ -1431,11 +1431,15 @@ class BayplanSimulator {
         if (mode === 'dis') fullList = fullList.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
         else fullList = fullList.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
 
-        // Recap with ALL operators
-        this.renderListRecap(fullList, mode, true);
-        // Recap with SELECTED operator (skip if ALL)
+        if (this.selectedOperator === 'ALL') {
+            // ALL: show one RECAP table grouped by POD, all operators summed
+            this.renderListRecap(fullList, mode, 'ALL');
+        } else {
+            // Specific OPR: show filtered RECAP grouped by POD
+            const filtered = fullList.filter(c => c.opr === this.selectedOperator);
+            this.renderListRecap(filtered, mode, 'SELECTED');
+        }
         let list = (this.selectedOperator === 'ALL') ? fullList : fullList.filter(c => c.opr === this.selectedOperator);
-        if (this.selectedOperator !== 'ALL') this.renderListRecap(list, mode, false);
 
         // Apply sorting before rendering
         if (this.listSortCol && this.listSortCol !== 'index') {
@@ -1524,16 +1528,16 @@ class BayplanSimulator {
         });
     }
 
-    renderListRecap(list, mode, isAllOperatorHeader) {
+    renderListRecap(list, mode, recapType) {
         const container = document.getElementById('listRecapContainer');
         if (!container) return;
-        if (isAllOperatorHeader) container.innerHTML = '';
+        container.innerHTML = '';
 
-        const filterLabel = isAllOperatorHeader ? 'ALL OPERATORS SUMMARY' : `SELECTED OPERATOR: ${this.selectedOperator}`;
-        const filterColor = isAllOperatorHeader ? '#38bdf8' : '#a855f7';
-        const getGroupKey = (c) => isAllOperatorHeader
-            ? (c.opr || '-')
-            : (mode === 'dis' ? (c.pod || c.port || '-') : (c.pod || '-'));
+        const isAll = (recapType === 'ALL');
+        const filterLabel = isAll ? 'ALL OPERATORS' : `SELECTED OPERATOR: ${this.selectedOperator}`;
+        const filterColor = isAll ? '#38bdf8' : '#a855f7';
+        // Always group by POD
+        const getGroupKey = (c) => mode === 'dis' ? (c.pod || c.port || '-') : (c.pod || '-');
 
         // Helper: is this container a 40' High Cube?
         const is40HC = (c) => {
@@ -1651,7 +1655,7 @@ class BayplanSimulator {
             </tr>
             </tbody></table></div></div>`;
 
-        container.innerHTML += html;
+        container.innerHTML = html;
     }
 
     exportExcel() {
