@@ -312,6 +312,7 @@ class BayplanSimulator {
                         weight: null,
                         temp: null,
                         dg: null,
+                        opr: '',   // operator/carrier code
                         isRestow: false
                     };
 
@@ -364,21 +365,56 @@ class BayplanSimulator {
                 const un = (parts[3] || '').trim();
                 if (cls || un) currentContainer.dg = [cls, un].filter(Boolean).join('/');
             }
+
+            // ──────────────────────────────────────────────
+            // NAD: Party — extract carrier/operator code
+            // NAD+CA+ZIM:172:20  → ZIM  (per-container level)
+            // NAD+MS+ZIM:172:20  → ZIM  (some files use MS = message sender)
+            // ──────────────────────────────────────────────
+            if (tag === 'NAD') {
+                const qualifier = (parts[1] || '').trim();
+                if (qualifier === 'CA' || qualifier === 'MS' || qualifier === 'CZ') {
+                    // C082 composite: party id + code qualifier + agency
+                    // Also try C080 (parts[4]) if C082 is empty
+                    const fromC082 = (parts[2] || '').split(':')[0].trim();
+                    const fromC080 = (parts[4] || '').split(':')[0].trim();
+                    const code = fromC082 || fromC080;
+                    if (code) {
+                        if (currentContainer) {
+                            // Per-container operator — override
+                            currentContainer.opr = code;
+                        }
+                    }
+                }
+            }
         });
 
         // Push the last container
         if (currentContainer) containers.push(currentContainer);
 
-        // Extract operator code from NAD+CA segment (applied globally to all containers)
-        let shipOperator = '';
-        segments.forEach(rawSeg => {
+        // GLOBAL FALLBACK: if containers have no per-container opr set,
+        // try to find a header-level NAD+CA (appears before any LOC+147)
+        // and assign it to all containers that still have no operator.
+        let headerOperator = '';
+        for (const rawSeg of segments) {
             const seg = rawSeg.trim();
             const parts = seg.split('+');
-            if (parts[0] === 'NAD' && (parts[1] || '').trim() === 'CA') {
-                shipOperator = (parts[2] || '').split(':')[0].trim();
+            const tag = parts[0];
+            // Stop looking once we hit the first container position
+            if (tag === 'LOC' && (parts[1] || '').trim() === '147') break;
+            if (tag === 'NAD') {
+                const qualifier = (parts[1] || '').trim();
+                if (qualifier === 'CA' || qualifier === 'MS' || qualifier === 'CZ') {
+                    const fromC082 = (parts[2] || '').split(':')[0].trim();
+                    const fromC080 = (parts[4] || '').split(':')[0].trim();
+                    const code = fromC082 || fromC080;
+                    if (code) { headerOperator = code; break; }
+                }
             }
-        });
-        if (shipOperator) containers.forEach(c => { if (!c.opr) c.opr = shipOperator; });
+        }
+        if (headerOperator) {
+            containers.forEach(c => { if (!c.opr) c.opr = headerOperator; });
+        }
 
         // Return everything that has a valid 6-digit position
         const valid = containers.filter(c => c.pos && c.pos.length === 6 && /^\d{6}$/.test(c.pos));
