@@ -5,7 +5,7 @@
 const ISO_TYPE_MAPPING = {
     // 20FT Containers
     "2200": "20DV", "2210": "20DV", "22G0": "20DV", "22G1": "20DV", "25G0": "20DV",
-    "22T0": "20TK", "22T1": "20TK",
+    "22T0": "20TK", "22T1": "20TK", "2270": "20TK", "22K2": "20TK",
     "2232": "20RE", "22R0": "20RE", "22R1": "20RE",
     "22P1": "20FL", "22P0": "20FL",
     "22U1": "20OT", "22U0": "20OT",
@@ -71,6 +71,7 @@ class BayplanSimulator {
         this.compTargetSort = { col: 'match', asc: false };
 
         this.highlightContainerId = null; // For Find feature
+        this.activeSimMode = 'A'; // Tracks simulation tab (Mode A or B)
 
         this.initEventListeners();
     }
@@ -132,8 +133,37 @@ class BayplanSimulator {
         // Simulation Calculation listeners (MODE A)
         ['calcProd', 'calcGang'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.addEventListener('input', () => this.calcModeA());
+            if (el) el.addEventListener('input', () => {
+                this.calcModeA();
+                if (this._lastChartData) this.renderGCWorkChart(this._lastChartData);
+            });
         });
+
+        // Mode B listeners
+        ['calcTargetBerth', 'calcBProd', 'calcBGang'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', () => {
+                this.autoCalcModeB();
+                if (this._lastChartData) this.renderGCWorkChart(this._lastChartData);
+            });
+        });
+
+        // Recommended Gang Apply button
+        const btnRec = document.getElementById('btnApplyRecGang');
+        if (btnRec) {
+            btnRec.addEventListener('click', () => {
+                const recVal = document.getElementById('outRecGang')?.textContent;
+                const inputGang = document.getElementById('calcGang');
+                if (recVal && recVal !== '-' && inputGang) {
+                    inputGang.value = recVal;
+                    // Trigger update
+                    this.calcModeA();
+                    if (this._lastChartData && this._lastChartData.length > 0) {
+                        this.renderGCWorkChart(this._lastChartData);
+                    }
+                }
+            });
+        }
 
         // Simulation Calculation listeners (MODE B)
         ['calcBProd', 'calcBGang', 'calcTargetBerth'].forEach(id => {
@@ -310,10 +340,12 @@ class BayplanSimulator {
                         port: '',
                         pol: '',   // LOC+9  port of loading
                         pod: '',   // LOC+11 port of discharge
+                        podr: '',  // LOC+6  port of discharge receipt
                         fullEmpty: '?',
                         weight: null,
                         temp: null,
                         dg: null,
+                        oog: false, // Out of Gauge flag (DIM+7 or DIM+8)
                         opr: '',   // operator/carrier code
                         isRestow: false
                     };
@@ -333,12 +365,16 @@ class BayplanSimulator {
                     // LOC+12 = Final destination (some carriers use this for POD)
                     if (currentContainer) {
                         let pod = (parts[2] || '').split(':')[0].trim();
-                        // Normalize known typos/aliases
                         if (pod === 'KRBUS') pod = 'KRPUS';
-                        // Only set pod if not already set by LOC+11
                         if (!currentContainer.pod || locType === '11') {
                             currentContainer.pod = pod;
                         }
+                    }
+                } else if (locType === '6') {
+                    if (currentContainer) {
+                        let podr = (parts[2] || '').split(':')[0].trim();
+                        if (podr === 'KRBUS') podr = 'KRPUS';
+                        currentContainer.podr = podr;
                     }
                 }
             }
@@ -376,6 +412,14 @@ class BayplanSimulator {
                 const cls = (parts[2] || '').trim();
                 const un = (parts[3] || '').trim();
                 if (cls || un) currentContainer.dg = [cls, un].filter(Boolean).join('/');
+            }
+
+            // DIM+8+CMT::xxx or DIM+7+CMT::xxx → Out of Gauge
+            if (tag === 'DIM' && currentContainer) {
+                const qualifier = (parts[1] || '').trim();
+                if (qualifier === '7' || qualifier === '8') {
+                    currentContainer.oog = true;
+                }
             }
 
             // ──────────────────────────────────────────────
@@ -717,30 +761,42 @@ class BayplanSimulator {
         if (this.viewMode === 'dis') return dis;
         if (this.viewMode === 'lod') return lod;
 
-        // Combined logic: Only target-port discharge, loading, and Restow containers
+        // Combined logic: Show ALL containers. Target-port matching and Restow
+        // highlighting is handled by getColorForContainer() which provides gray fallback.
         const combined = [];
-
-        dis.forEach(c => {
-            const pod = c.pod || c.port;
-            if (c.isRestow || pod === this.targetPort) {
-                combined.push(c);
-            }
-        });
-
-        lod.forEach(c => {
-            const pol = c.pol || c.port;
-            if (c.isRestow) {
-                combined.push(c);
-            } else if (pol === this.targetPort) {
-                combined.push(c);
-            }
-        });
+        dis.forEach(c => combined.push(c));
+        lod.forEach(c => combined.push(c));
 
         return combined;
     }
 
     // Open detailed view for one or more bay codes, with side info panel
     openDetailedBayGroup(bayCodes) {
+        if (!this.vesselProfile) {
+            let maxROffset = 9; // 5 + 4칸 확장
+            let maxTDeck = 13; // 13+1=14 -> Tier 98
+            let maxTHold = 13; // 13+1 = 14 -> Tier 30까지 보이도록 설정
+            [...this.disContainers, ...this.lodContainers].forEach(c => {
+                const rInt = parseInt(c.pos.substring(2, 4) || '0');
+                const tInt = parseInt(c.pos.substring(4, 6) || '0');
+                let off = 0;
+                if (rInt > 1) off = (rInt % 2 === 0) ? rInt / 2 : Math.floor(rInt / 2);
+                if (off > maxROffset) maxROffset = off;
+                if (tInt >= 70) {
+                    const tidx = Math.floor((tInt - 70) / 2);
+                    if (tidx > maxTDeck) maxTDeck = tidx;
+                } else {
+                    const tidx = Math.floor((tInt - 2) / 2);
+                    if (tidx > maxTHold) maxTHold = tidx;
+                }
+            });
+            this.vesselProfile = {
+                maxRowOffset: Math.min(14, maxROffset + 1), // 최대로 가도 14를 넘지 않음 (15가 좌측끝)
+                maxTierDeck: Math.min(24, maxTDeck + 1),
+                maxTierHold: Math.min(24, maxTHold + 1)
+            };
+        }
+
         if (this.bayGroupsForNavigation && this.bayGroupsForNavigation.length > 0) {
             const strCodes = bayCodes.join(',');
             this.currentBayGroupIdx = this.bayGroupsForNavigation.findIndex(g => g.join(',') === strCodes);
@@ -757,7 +813,7 @@ class BayplanSimulator {
 
         const scrollArea = document.createElement('div');
         scrollArea.id = 'bayScrollArea';
-        scrollArea.style.cssText = 'flex:1; overflow:auto; display:block; text-align:center; height:100%; cursor:grab; box-sizing:border-box; padding:20px 0;';
+        scrollArea.style.cssText = 'flex:1; overflow:auto; display:block; text-align:center; height:100%; cursor:grab; box-sizing:border-box; padding:20px 0; background:#f8f4ec; border-radius:6px;';
 
         const gridsWrapper = document.createElement('div');
         gridsWrapper.style.cssText = 'display:inline-flex; gap:30px; vertical-align:middle; justify-content:center; align-items:center; min-height:100%;';
@@ -797,7 +853,7 @@ class BayplanSimulator {
 
             const h = document.createElement('h3');
             h.textContent = `BAY ${bayCode}${parseInt(bayCode) % 2 === 0 ? " (40')" : ''}`;
-            h.style.cssText = 'font-size:12px;color:var(--accent-color);text-align:center;margin-bottom:8px;';
+            h.style.cssText = 'font-size:18px;color:#000;font-weight:900;text-align:center;margin-bottom:8px;';
             baySection.appendChild(h);
 
             baySection.appendChild(this.buildDetailGrid('ON DECK', bayCode, false, infoPanel));
@@ -841,9 +897,8 @@ class BayplanSimulator {
         const natW = gridsWrapper.scrollWidth;
         const natH = gridsWrapper.scrollHeight;
 
-        if (!natW || !natH || availW <= 0 || availH <= 0) return;
-
-        let scale = Math.min(availW / natW, availH / natH);
+        // 사용자 요청에 따라 기본 사이즈를 120%로 고정
+        let scale = 1.2;
 
         this.autoScale = scale; // Save auto-fit ratio
 
@@ -865,15 +920,26 @@ class BayplanSimulator {
     // Build one ON-DECK or HOLD grid with row/tier labels and clickable slots
     buildDetailGrid(label, bayCode, isHold, infoPanel) {
         const wrapper = document.createElement('div');
-        wrapper.innerHTML = `<p style="font-size:10px;color:var(--text-secondary);margin-bottom:3px;">${label}</p>`;
+        wrapper.innerHTML = `<p style="font-size:12px;color:#000;font-weight:bold;margin-bottom:3px;">${label}</p>`;
 
         const grid = document.createElement('div');
         grid.className = 'grid-section';
 
-        for (let t = 24; t >= 0; t--) {
-            for (let r = 0; r < 30; r++) {
+        const profile = this.vesselProfile || { maxRowOffset: 14, maxTierDeck: 24, maxTierHold: 24 };
+        const rStart = 15 - profile.maxRowOffset;
+        const rEnd = 15 + profile.maxRowOffset;
+        const colsCount = (rEnd - rStart + 1);
+
+        const maxT = isHold ? profile.maxTierHold : profile.maxTierDeck;
+        const rowsCount = maxT + 1;
+
+        grid.style.cssText = `display: grid; grid-template-columns: repeat(${colsCount}, 18px) 32px; grid-template-rows: repeat(${rowsCount}, 18px) 16px; gap: 1px;`;
+
+        for (let t = maxT; t >= 0; t--) {
+            for (let r = rStart; r <= rEnd; r++) {
+                const rowCode = this.colIdxToRowCode(r);
                 const slot = document.createElement('div');
-                slot.className = 'slot';
+                slot.className = 'slot' + (rowCode === '01' ? ' center-col' : '');
                 const found = this.checkAndFillSlot(slot, bayCode, r, t, isHold);
                 if (found) {
                     slot.style.cursor = 'pointer';
@@ -884,7 +950,7 @@ class BayplanSimulator {
                 }
                 grid.appendChild(slot);
             }
-            // Tier label (31st column in this row)
+            // Tier label (rightmost column)
             const tierLbl = document.createElement('div');
             tierLbl.className = 'tier-label';
             const tierNum = isHold ? (2 + t * 2) : (70 + t * 2);
@@ -892,8 +958,8 @@ class BayplanSimulator {
             grid.appendChild(tierLbl);
         }
 
-        // Bottom row: row-number labels (30 cells + 1 blank corner)
-        for (let r = 0; r < 30; r++) {
+        // Bottom row: row-number labels
+        for (let r = rStart; r <= rEnd; r++) {
             const code = this.colIdxToRowCode(r);
             const rowLbl = document.createElement('div');
             rowLbl.className = 'row-label' + (code === '01' ? ' center-row' : '');
@@ -997,7 +1063,7 @@ class BayplanSimulator {
                     element.style.backgroundColor = color;
                 }
 
-                element.innerHTML = `<span style="font-size: 6px; transform: scale(0.8);">${found.size}</span>`;
+                element.innerHTML = '';
                 const mappedType = this.getMappedType(found.type);
                 element.title = `${found.id} (${mappedType})\nPort: ${found.port}`;
                 if (this.highlightContainerId && found.id === this.highlightContainerId) {
@@ -1022,7 +1088,7 @@ class BayplanSimulator {
                 const color2 = this.getColorForContainer(c2);
 
                 element.style.background = `linear-gradient(135deg, ${color1} 50%, ${color2} 50%)`;
-                element.innerHTML = `<span style="font-size: 6px; transform: scale(0.8);">${c1.size}</span>`;
+                element.innerHTML = '';
 
                 const t1 = this.getMappedType(c1.type);
                 const t2 = this.getMappedType(c2.type);
@@ -1041,9 +1107,9 @@ class BayplanSimulator {
     renderRecap() {
         const bays = this.getBays();
 
-        // Filter strictly to current operational moves
-        const validDis = this.disContainers.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
-        const validLod = this.lodContainers.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
+        // Filter strictly to current operational moves (Excluding restows for main boxes)
+        const validDis = this.disContainers.filter(c => ((c.pod || c.port) === this.targetPort) && !c.isRestow);
+        const validLod = this.lodContainers.filter(c => ((c.pol || c.port) === this.targetPort) && !c.isRestow);
 
         let disCount = { total: 0, f20: 0, e20: 0, f40: 0, e40: 0 };
         let lodCount = { total: 0, f20: 0, e20: 0, f40: 0, e40: 0 };
@@ -1244,10 +1310,11 @@ class BayplanSimulator {
         document.getElementById('kpiTot40F').textContent = disCount.f40 + lodCount.f40;
         document.getElementById('kpiTot40E').textContent = disCount.e40 + lodCount.e40;
 
-        // Calculate and Display Restow Count
-        let restowCount = 0;
-        validDis.forEach(c => { if (c.isRestow) restowCount++; });
-        document.getElementById('kpiRestowTotal').textContent = restowCount;
+        // Calculate and Display Restow Count (from all parsed containers, deduplicated)
+        const restowSet = new Set();
+        this.disContainers.forEach(c => { if (c.isRestow && c.id) restowSet.add(c.id); });
+        this.lodContainers.forEach(c => { if (c.isRestow && c.id) restowSet.add(c.id); });
+        document.getElementById('kpiRestowTotal').textContent = restowSet.size;
 
         // Twin Pair Calculation (Actual G/C Moves)
         const countTwins = (list) => {
@@ -1283,11 +1350,16 @@ class BayplanSimulator {
         if (elTotalMoves) elTotalMoves.textContent = actualGCMoves;
 
         this.updateSimulationCalc();
+
+        // Render G/C Work Gantt Chart
+        this._lastChartData = chartData;
+        this.renderGCWorkChart(chartData);
     }
 
     // MODE A: Prod + Gangs → Est. Berth Time
     calcModeA() {
         const totalMoves = parseInt(document.getElementById('kpiActualBoxes')?.textContent) || 0;
+        const totalBoxes = parseInt(document.getElementById('kpiBoxCount')?.textContent) || 0;
         const prod = parseFloat(document.getElementById('calcProd')?.value);
         const gangs = parseFloat(document.getElementById('calcGang')?.value);
         const outBerth = document.getElementById('outRequiredBerth');
@@ -1295,6 +1367,140 @@ class BayplanSimulator {
         if (!totalMoves || !prod || !gangs || prod <= 0 || gangs <= 0) { outBerth.textContent = '-'; return; }
         const berthTime = Math.round(totalMoves / (prod * gangs)) + 2;
         outBerth.textContent = berthTime + 'h';
+
+        // Update recommendation
+        this.updateRecommendation(totalMoves, prod, totalBoxes);
+    }
+
+    updateRecommendation(totalMoves, prod, totalBoxes) {
+        const outRec = document.getElementById('outRecGang');
+        const outReason = document.getElementById('recGangReason');
+        if (!outRec || !totalMoves || !prod) {
+            if (outRec) outRec.textContent = '-';
+            return;
+        }
+
+        // Count active bay groups
+        let bayGroupsCount = 0;
+        if (this._lastChartData) {
+            const getGroupKey = n => String(Math.ceil((n + 1) / 4) * 4 - 2).padStart(2, '0');
+            const groups = new Set();
+            this._lastChartData.filter(b => (b.d + b.l) > 0).forEach(b => {
+                groups.add(getGroupKey(parseInt(b.bay)));
+            });
+            bayGroupsCount = groups.size;
+        }
+
+        if (bayGroupsCount === 0) {
+            outRec.textContent = '-';
+            if (outReason) outReason.textContent = 'No active bays found';
+            return;
+        }
+
+        // Logic: 
+        // 1. Minimum 1 gang
+        // 2. Maximum: 1 gang per active bay group (cannot do more since one group = one GC zone)
+        // 3. Goal: roughly 12-16 hours of work (excluding prep)
+        // moves / (prod * gangs) = targetHrs (e.g. 14) -> gangs = moves / (prod * 14)
+        const targetHrs = 14;
+        let recommended = Math.ceil(totalMoves / (prod * targetHrs));
+
+        // Clamp between 1 and total active bay groups
+        const finalRec = Math.min(bayGroupsCount, Math.max(1, recommended));
+
+        outRec.textContent = finalRec;
+        if (outReason) {
+            if (finalRec === bayGroupsCount && recommended > bayGroupsCount) {
+                outReason.textContent = `Limited to max ${bayGroupsCount} active bays`;
+            } else {
+                outReason.textContent = `Balanced workload for ~${targetHrs}h duration`;
+            }
+        }
+
+        // Render the detailed statistics table for 1~9 gangs
+        this.renderGangEfficiencyTable(totalMoves, prod, bayGroupsCount, totalBoxes);
+    }
+
+    renderGangEfficiencyTable(totalMoves, prod, bayGroupsCount, totalBoxes) {
+        const container = document.getElementById('gangSimTable');
+        if (!container) return;
+
+        const formatXDWH = (h) => {
+            const d = Math.floor(h / 24);
+            const rh = Math.round(h % 24);
+            return d > 0 ? d + 'D ' + rh + 'H' : rh + 'H';
+        };
+
+        let bestGang = -1;
+        let minRange = Infinity;
+
+        const sims = [];
+        for (let g = 1; g <= 9; g++) {
+            const estTime = Math.round(totalMoves / (prod * g)) + 2;
+            const netHrs = Math.max(0.5, estTime - 2);
+
+            // Productivity (moves/hr per gang)
+            // If totalBoxes is 0, we'll just show moves
+            const prodBox = totalBoxes ? (totalBoxes / (g * netHrs)) : (totalMoves / (g * netHrs));
+            const prodMove = totalMoves / (g * netHrs);
+
+            // Calculate imbalance if data exists
+            let range = 0;
+            if (this._lastChartData && bayGroupsCount > 0) {
+                const activeData = this._lastChartData.filter(b => (b.d + b.l) > 0);
+                const getGroupKey = n => String(Math.ceil((n + 1) / 4) * 4 - 2).padStart(2, '0');
+                const groupMap = {};
+                activeData.forEach(b => {
+                    const gk = getGroupKey(parseInt(b.bay));
+                    if (!groupMap[gk]) groupMap[gk] = { moves: 0 };
+                    groupMap[gk].moves += (b.d + b.l);
+                });
+                const bayGroups = Object.values(groupMap);
+                const gCount = Math.min(g, bayGroups.length);
+                const gangMoves = Array(gCount).fill(0);
+                let currentIdx = 0;
+                for (let i = 0; i < gCount; i++) {
+                    const sectionSize = Math.floor(bayGroups.length / gCount) + (i < (bayGroups.length % gCount) ? 1 : 0);
+                    const section = bayGroups.slice(currentIdx, currentIdx + sectionSize);
+                    gangMoves[i] = section.reduce((sum, bg) => sum + bg.moves, 0);
+                    currentIdx += sectionSize;
+                }
+                const times = gangMoves.map(m => m / prod);
+                range = Math.max(...times) - Math.min(...times);
+
+                if (range < minRange && g <= bayGroupsCount) {
+                    minRange = range;
+                }
+            }
+
+            sims.push({ g, timeStr: formatXDWH(estTime), prodBox, prodMove });
+        }
+
+        let html = `
+            <table style="width:100%; border-collapse:collapse; font-size:10px; color:var(--text-secondary);">
+                <thead>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.1);">
+                        <th style="text-align:left; padding:6px 4px;">Gangs</th>
+                        <th style="text-align:center; padding:6px 4px;">Est. Time</th>
+                        <th style="text-align:center; padding:6px 4px;">Productivity (Box/Mvs)</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+        sims.forEach(s => {
+            html += `
+                <tr>
+                    <td style="padding:6px 8px;">${s.g}</td>
+                    <td style="text-align:center; padding:6px 4px;">${s.timeStr}</td>
+                    <td style="text-align:center; padding:6px 4px;">
+                        <span style="color:#22c55e;">${s.prodBox.toFixed(1)}</span> / 
+                        <span style="color:#38bdf8;">${s.prodMove.toFixed(1)}</span>
+                    </td>
+                </tr>`;
+        });
+
+        html += `</tbody></table>`;
+        container.innerHTML = html;
     }
 
     // MODE B: real-time auto-calc
@@ -1328,6 +1534,276 @@ class BayplanSimulator {
         }
     }
 
+    // Render G/C Work Gantt Chart
+    // X = bay groups, Y = time reversed (00:00 at bottom), GC sections fixed
+    renderGCWorkChart(chartData) {
+        // Source gang count from the active mode
+        let gangCount = 0;
+        let prodVal = 0;
+
+        if (this.activeSimMode === 'B') {
+            const bGang = parseInt(document.getElementById('calcBGang')?.value);
+            const bProd = parseFloat(document.getElementById('calcBProd')?.value);
+            // If one is empty in Mode B, we might need to derive it. 
+            // For chart rendering, we primarily need gangCount and prod.
+            if (!isNaN(bGang) && bGang > 0) {
+                gangCount = bGang;
+                // If prod is empty, maybe calculate required prod? 
+                // But for the chart, simple gang estimation is enough.
+                prodVal = bProd || parseFloat(document.getElementById('calcProd')?.value) || 25;
+            } else {
+                // If gang is empty, use the derived required gangs if available
+                const reqGangText = document.getElementById('outRequiredGang')?.textContent || '';
+                gangCount = parseInt(reqGangText) || parseInt(document.getElementById('calcGang')?.value) || 3;
+                prodVal = bProd || parseFloat(document.getElementById('calcProd')?.value) || 25;
+            }
+        } else {
+            gangCount = parseInt(document.getElementById('calcGang')?.value) || 3;
+            prodVal = parseFloat(document.getElementById('calcProd')?.value) || 25;
+        }
+
+        const container = document.getElementById('gcWorkChart');
+        if (!container) return;
+        if (!prodVal || !gangCount || chartData.length === 0) {
+            container.innerHTML = '<div style="color:#64748b;padding:20px;font-size:12px;">Productivity / Gang 또는 Mode B 입력을 완료하세요.</div>';
+            return;
+        }
+        container.innerHTML = '';
+
+        // ── 1. Filter & group ────────────────────────────────────────────
+        const activeData = chartData.filter(b => (b.d + b.l) > 0);
+        if (!activeData.length) { container.innerHTML = '<div style="color:#64748b;padding:20px;">No work data.</div>'; return; }
+
+        const getGroupKey = n => String(Math.ceil((n + 1) / 4) * 4 - 2).padStart(2, '0');
+        const groupMap = {};
+        activeData.forEach(b => {
+            const gk = getGroupKey(parseInt(b.bay));
+            if (!groupMap[gk]) groupMap[gk] = { group: gk, d: 0, l: 0, bays: [] };
+            groupMap[gk].d += b.d;
+            groupMap[gk].l += b.l;
+            if (!groupMap[gk].bays.includes(b.bay)) groupMap[gk].bays.push(b.bay);
+        });
+        const bayGroups = Object.values(groupMap).sort((a, b) => parseInt(a.group) - parseInt(b.group));
+
+        // ── 2. GC sections (Evenly distributed) ──────────────────────────
+        const totalBays = bayGroups.length;
+        const gangCountToUse = Math.min(gangCount, totalBays);
+        const gangSections = [];
+        let currentIdx = 0;
+
+        for (let i = 0; i < gangCountToUse; i++) {
+            // Distribute remainder among first few gangs
+            const sectionSize = Math.floor(totalBays / gangCountToUse) + (i < (totalBays % gangCountToUse) ? 1 : 0);
+            gangSections.push(bayGroups.slice(currentIdx, currentIdx + sectionSize));
+            currentIdx += sectionSize;
+        }
+        const actualGangs = gangSections.length;
+
+        // ── 3. Schedule ─────────────────────────────────────────────────
+        const scheduled = [];
+        const gangEndTimes = Array(actualGangs).fill(0);
+        gangSections.forEach((sectionGroups, gi) => {
+            let t = 0;
+            sectionGroups.filter(g => g.d > 0).forEach(grp => {
+                const dur = grp.d / prodVal;
+                scheduled.push({ group: grp.group, type: 'D', moves: grp.d, bays: [...grp.bays].sort(), gangId: gi, start: t, end: t + dur, duration: dur });
+                t += dur;
+            });
+            sectionGroups.filter(g => g.l > 0).forEach(grp => {
+                const dur = grp.l / prodVal;
+                scheduled.push({ group: grp.group, type: 'L', moves: grp.l, bays: [...grp.bays].sort(), gangId: gi, start: t, end: t + dur, duration: dur });
+                t += dur;
+            });
+            gangEndTimes[gi] = t;
+        });
+        const totalHours = Math.max(...gangEndTimes, 1);
+
+        // ── 4. Color palette: family-based per GC (dark=D, light=L) ─────
+        // Each GC uses ONE color family so it's always recognisably the same gang
+        const GC_PALETTE = [
+            { d: '#ef4444', l: '#fca5a5', label: '#ef4444' },  // GC1: Red family
+            { d: '#8b5cf6', l: '#c4b5fd', label: '#a78bfa' },  // GC2: Violet family
+            { d: '#f97316', l: '#fdba74', label: '#fb923c' },  // GC3: Orange family
+            { d: '#ec4899', l: '#f9a8d4', label: '#f472b6' },  // GC4: Pink family
+            { d: '#eab308', l: '#fde047', label: '#fbbf24' },  // GC5: Yellow family
+            { d: '#10b981', l: '#6ee7b7', label: '#34d399' },  // GC6: Emerald family
+        ];
+
+        // ── 5. Summary table ────────────────────────────────────────────
+        const summaryWrap = document.createElement('div');
+        summaryWrap.style.cssText = `margin-bottom:12px; border-radius:8px; overflow:hidden;
+            border:1px solid rgba(255,255,255,0.08); background:#0a1420;`;
+
+        const tbl = document.createElement('table');
+        tbl.style.cssText = `width:100%; border-collapse:collapse; font-size:12px; font-family:'Inter',sans-serif;`;
+        tbl.innerHTML = `<thead><tr style="background:#0d1628;">
+            <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">GC</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Bay Groups</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Total Moves</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Start</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">End</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Work Hrs</th>
+        </tr></thead>`;
+
+        const toHHMM = h => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
+
+        const tbody = document.createElement('tbody');
+        gangSections.forEach((sec, gi) => {
+            const tasks = scheduled.filter(t => t.gangId === gi);
+            const totalMoves = tasks.reduce((s, t) => s + t.moves, 0);
+            const pal = GC_PALETTE[gi % GC_PALETTE.length];
+            const tr = document.createElement('tr');
+            tr.style.cssText = `border-top:1px solid rgba(255,255,255,0.05);`;
+            tr.innerHTML = `
+                <td style="padding:7px 12px;color:${pal.label};font-weight:800;font-size:13px;">GC ${gi + 1}</td>
+                <td style="padding:7px 12px;text-align:center;color:#e2e8f0;">${sec.length}</td>
+                <td style="padding:7px 12px;text-align:center;color:#e2e8f0;font-weight:700;">${totalMoves}</td>
+                <td style="padding:7px 12px;text-align:center;color:#94a3b8;">00:00</td>
+                <td style="padding:7px 12px;text-align:center;color:#94a3b8;">${toHHMM(gangEndTimes[gi])}</td>
+                <td style="padding:7px 12px;text-align:center;color:#fbbf24;font-weight:700;">${gangEndTimes[gi].toFixed(1)}h</td>`;
+            tbody.appendChild(tr);
+        });
+        tbl.appendChild(tbody);
+        summaryWrap.appendChild(tbl);
+        container.appendChild(summaryWrap);
+
+        // ── 6. Layout constants ──────────────────────────────────────────
+        const PX_PER_HOUR = 52;
+        const TIME_W = 52;
+        const NUM_COLS = bayGroups.length;
+        const getColW = (n = 1) => `calc(${n} * (100% - ${TIME_W}px) / ${NUM_COLS})`;
+        const getLeft = (ci) => `calc(${TIME_W}px + ${ci} * (100% - ${TIME_W}px) / ${NUM_COLS})`;
+
+        const GC_HDR_H = 24;
+        const BAY_HDR_H = 28;
+        const HEADER_H = GC_HDR_H + BAY_HDR_H;
+        const GRID_H = Math.ceil(totalHours + 0.5) * PX_PER_HOUR;
+
+        const isLastInSec = ci => {
+            let acc = 0;
+            for (let g = 0; g < gangSections.length; g++) {
+                acc += gangSections[g].length;
+                if (ci === acc - 1) return true;
+            }
+            return false;
+        };
+
+        // ── 7. Build DOM ─────────────────────────────────────────────────
+        // Outer wrapper: Full width, vertical scroll handled by the page
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = `overflow:hidden; width:100%; background:#080e1c;
+            border-radius:8px; border:1px solid rgba(255,255,255,0.1);
+            font-family:'Inter',monospace,sans-serif;`;
+
+        // ── Sticky 2-row header ──
+        const stickyHdr = document.createElement('div');
+        stickyHdr.style.cssText = `position:sticky; top:0; z-index:20; width:100%;
+            background:#0c1424; border-bottom:2px solid rgba(255,255,255,0.18);`;
+
+        // Row 1: GC labels
+        const gcRow = document.createElement('div');
+        gcRow.style.cssText = `display:flex; height:${GC_HDR_H}px; border-bottom:1px solid rgba(255,255,255,0.1);`;
+        const gcCorner = document.createElement('div');
+        gcCorner.style.cssText = `width:${TIME_W}px; flex-shrink:0; border-right:1px solid rgba(255,255,255,0.12);`;
+        gcRow.appendChild(gcCorner);
+        gangSections.forEach((sec, gi) => {
+            const pal = GC_PALETTE[gi % GC_PALETTE.length];
+            const cell = document.createElement('div');
+            cell.style.cssText = `width:${getColW(sec.length)}; flex-shrink:0;
+                display:flex; align-items:center; justify-content:center;
+                font-size:11px; font-weight:800; color:${pal.label}; letter-spacing:.07em;
+                border-right:2px solid rgba(255,255,255,0.18); overflow:hidden; white-space:nowrap;`;
+            cell.textContent = `GC ${gi + 1}`;
+            gcRow.appendChild(cell);
+        });
+        stickyHdr.appendChild(gcRow);
+
+        // Row 2: bay group numbers
+        const bayHdrRow = document.createElement('div');
+        bayHdrRow.style.cssText = `display:flex; height:${BAY_HDR_H}px; background:#0c1424;`;
+        const bayCorner = document.createElement('div');
+        bayCorner.style.cssText = `width:${TIME_W}px; flex-shrink:0; border-right:1px solid rgba(255,255,255,0.1);`;
+        bayHdrRow.appendChild(bayCorner);
+        bayGroups.forEach((grp, ci) => {
+            const last = isLastInSec(ci);
+            const cell = document.createElement('div');
+            cell.style.cssText = `width:${getColW()}; flex-shrink:1; min-width:0; display:flex; flex-direction:column;
+                align-items:center; justify-content:center; line-height:1.2; overflow:hidden;
+                border-right:${last ? '2px solid rgba(255,255,255,0.18)' : '1px solid rgba(255,255,255,0.06)'};`;
+            const subBays = grp.bays.sort((a, b) => parseInt(a) - parseInt(b));
+            cell.innerHTML = `<span style="font-size:10px;font-weight:800;color:#e2e8f0;">${grp.group}</span>
+                <span style="font-size:7px;font-weight:600;color:#cbd5e1;">${subBays.join('/')}</span>`;
+            bayHdrRow.appendChild(cell);
+        });
+        stickyHdr.appendChild(bayHdrRow);
+        wrapper.appendChild(stickyHdr);
+
+        // ── Canvas ──
+        const canvas = document.createElement('div');
+        canvas.style.cssText = `position:relative; width:100%; height:${GRID_H}px;`;
+
+        // Time labels + grid lines
+        const maxH = Math.ceil(totalHours + 1);
+        for (let h = 0; h <= maxH; h++) {
+            const y = GRID_H - h * PX_PER_HOUR;
+            if (y < -10 || y > GRID_H + 10) continue;
+            const lbl = document.createElement('div');
+            lbl.style.cssText = `position:absolute; left:0; top:${y - 9}px;
+                width:${TIME_W - 4}px; font-size:10px; font-weight:600; color:#e2e8f0;
+                text-align:right; padding-right:6px; box-sizing:border-box;`;
+            lbl.textContent = `${String(h).padStart(2, '0')}:00`;
+            canvas.appendChild(lbl);
+            const line = document.createElement('div');
+            line.style.cssText = `position:absolute; left:${TIME_W}px; top:${y}px;
+                width:calc(100% - ${TIME_W}px); height:1px;
+                background:rgba(255,255,255,${h === 0 ? '0.28' : '0.06'});`;
+            canvas.appendChild(line);
+        }
+
+        // Vertical column separators
+        bayGroups.forEach((grp, ci) => {
+            const last = isLastInSec(ci);
+            const sep = document.createElement('div');
+            sep.style.cssText = `position:absolute; left:${getLeft(ci + 1)}; top:0;
+                width:${last ? '2px' : '1px'}; height:${GRID_H}px;
+                background:${last ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.05)'};`;
+            canvas.appendChild(sep);
+        });
+
+        // Task blocks (Reversed Y: 00:00 at bottom)
+        scheduled.forEach(task => {
+            const colIdx = bayGroups.findIndex(g => g.group === task.group);
+            if (colIdx < 0) return;
+
+            const pal = GC_PALETTE[task.gangId % GC_PALETTE.length];
+            const bgColor = task.type === 'D' ? pal.d : pal.l;
+            const textColor = task.type === 'D' ? 'rgba(255,255,255,0.92)' : 'rgba(0,0,0,0.8)';
+
+            const block = document.createElement('div');
+            block.style.cssText = `position:absolute;
+                left:calc(${getLeft(colIdx)} + 3px);
+                width:calc(${getColW()} - 6px);
+                bottom:${task.start * PX_PER_HOUR}px;
+                height:${task.duration * PX_PER_HOUR}px;
+                background:${bgColor}; border-radius:4px; overflow:hidden; z-index:3;
+                cursor:default; box-shadow:0 2px 8px rgba(0,0,0,0.5);
+                display:flex; flex-direction:column; border:1px solid rgba(255,255,255,0.2);`;
+
+            block.title = `Bay ${task.group} (${task.bays.join(',')}) | ${task.type === 'D' ? 'Discharge' : 'Load'} | GC${task.gangId + 1}\nMoves: ${task.moves} | ${task.start.toFixed(1)}h → ${task.end.toFixed(1)}h`;
+
+            const lbl = document.createElement('div');
+            lbl.style.cssText = `padding:2px 4px; font-size:9px; font-weight:800;
+                color:${textColor}; line-height:1.2; white-space:nowrap; overflow:hidden;`;
+            lbl.innerHTML = `${task.group}${task.type}-GC${task.gangId + 1}<br>${task.moves}mvs`;
+            block.appendChild(lbl);
+            canvas.appendChild(block);
+        });
+
+        wrapper.appendChild(canvas);
+        container.style.height = 'auto';
+        container.appendChild(wrapper);
+    }
+
     calcModeB() { this.autoCalcModeB(); }
 
     switchSimMode(mode) {
@@ -1336,6 +1812,8 @@ class BayplanSimulator {
         const tabA = document.getElementById('modeTabA');
         const tabB = document.getElementById('modeTabB');
         if (!modeA || !modeB) return;
+
+        this.activeSimMode = mode;
 
         if (mode === 'A') {
             modeA.style.display = 'grid';
@@ -1366,6 +1844,9 @@ class BayplanSimulator {
             }
             this.autoCalcModeB();
         }
+
+        // Re-render chart to reflect the correct gang count source immediately
+        if (this._lastChartData) this.renderGCWorkChart(this._lastChartData);
     }
 
     // Keep backward compat
@@ -1483,8 +1964,8 @@ class BayplanSimulator {
 
     renderContainerList(mode) {
         let fullList = mode === 'dis' ? [...this.disContainers] : [...this.lodContainers];
-        if (mode === 'dis') fullList = fullList.filter(c => (c.pod || c.port) === this.targetPort || c.isRestow);
-        else fullList = fullList.filter(c => (c.pol || c.port) === this.targetPort || c.isRestow);
+        if (mode === 'dis') fullList = fullList.filter(c => (c.pod || c.port) === this.targetPort && !c.isRestow);
+        else fullList = fullList.filter(c => (c.pol || c.port) === this.targetPort && !c.isRestow);
 
         if (this.selectedOperator === 'ALL') {
             // ALL: show one RECAP table grouped by POD, all operators summed
@@ -1573,7 +2054,7 @@ class BayplanSimulator {
                 <td style="text-align:center;">${c.size}'</td>
                 <td style="text-align:center;">${mappedType || '-'}</td>
                 <td>${c.pol || c.port || '-'}</td>
-                <td>${c.pod || '-'}</td>
+                <td style="color:#f59e0b;font-weight:bold;">${c.podr || c.pod || '-'}</td>
                 <td style="color:${feColor};font-weight:600;">${fe}</td>
                 <td style="text-align:right;">${c.weight ? c.weight + ' T' : '-'}</td>
                 <td style="text-align:center;color:#ef4444;font-weight:600;">${c.dg || ''}</td>
@@ -1589,128 +2070,145 @@ class BayplanSimulator {
         container.innerHTML = '';
 
         const isAll = (recapType === 'ALL');
-        const filterLabel = isAll ? 'ALL OPERATORS' : `SELECTED OPERATOR: ${this.selectedOperator}`;
         const filterColor = isAll ? '#38bdf8' : '#a855f7';
-        // Always group by POD
-        const getGroupKey = (c) => mode === 'dis' ? (c.pod || c.port || '-') : (c.pod || '-');
 
-        // Helper: is this container a 40' High Cube?
         const is40HC = (c) => {
             if (c.size !== 40) return false;
             const mapped = this.getMappedType(c.type) || '';
             return mapped.includes('HC') || mapped.includes('HQ') || mapped.includes('HT');
         };
 
-        const groups = {};
-        list.forEach(c => {
-            const key = getGroupKey(c);
-            if (!groups[key]) {
-                groups[key] = {
-                    port: key,
-                    s20F: 0, s20E: 0,
-                    s40F: 0, s40E: 0,
-                    s40HF: 0, s40HE: 0,
-                    s45F: 0, s45E: 0,
-                    rf: 0, dg: 0,
-                    weight: 0
-                };
-            }
-            const g = groups[key];
-            const isFull = c.fullEmpty !== 'E';
-            const isRF = c.temp !== null && c.temp !== undefined && c.temp !== '';
-            const isDG = !!c.dg;
+        const generateTableHTML = (title, groupKeyFn, portLabel) => {
+            const groups = {};
+            list.forEach(c => {
+                const key = groupKeyFn(c);
+                if (!groups[key]) {
+                    groups[key] = {
+                        port: key,
+                        s20F: 0, s20E: 0, s40F: 0, s40E: 0,
+                        s40HF: 0, s40HE: 0, s45F: 0, s45E: 0,
+                        rf: 0, dg: 0, oog: 0, weight: 0
+                    };
+                }
+                const g = groups[key];
+                const isFull = c.fullEmpty !== 'E';
+                const isRF = c.temp !== null && c.temp !== undefined && c.temp !== '';
+                const isDG = !!c.dg;
+                const isOOG = !!c.oog;
 
-            if (c.size === 20) { isFull ? g.s20F++ : g.s20E++; }
-            else if (c.size === 45) { isFull ? g.s45F++ : g.s45E++; }
-            else if (is40HC(c)) { isFull ? g.s40HF++ : g.s40HE++; }
-            else { isFull ? g.s40F++ : g.s40E++; }
+                if (c.size === 20) { isFull ? g.s20F++ : g.s20E++; }
+                else if (c.size === 45) { isFull ? g.s45F++ : g.s45E++; }
+                else if (is40HC(c)) { isFull ? g.s40HF++ : g.s40HE++; }
+                else { isFull ? g.s40F++ : g.s40E++; }
 
-            if (isRF) g.rf++;
-            if (isDG) g.dg++;
-            if (c.weight) g.weight += parseFloat(c.weight);
-        });
+                if (isRF) g.rf++;
+                if (isDG) g.dg++;
+                if (isOOG) g.oog++;
+                if (c.weight) g.weight += parseFloat(c.weight);
+            });
 
-        const rows = Object.values(groups).sort((a, b) => {
-            const tA = a.s20F + a.s20E + a.s40F + a.s40E + a.s40HF + a.s40HE + a.s45F + a.s45E;
-            const tB = b.s20F + b.s20E + b.s40F + b.s40E + b.s40HF + b.s40HE + b.s45F + b.s45E;
-            return tB - tA;
-        });
+            const rows = Object.values(groups).sort((a, b) => {
+                const tA = a.s20F + a.s20E + a.s40F + a.s40E + a.s40HF + a.s40HE + a.s45F + a.s45E;
+                const tB = b.s20F + b.s20E + b.s40F + b.s40E + b.s40HF + b.s40HE + b.s45F + b.s45E;
+                return tB - tA;
+            });
 
-        const getTeu = (g) =>
-            (g.s20F + g.s20E) + (g.s40F + g.s40E + g.s40HF + g.s40HE + g.s45F + g.s45E) * 2;
-        const getTeuE = (g) =>
-            g.s20E + (g.s40E + g.s40HE + g.s45E) * 2;
+            if (rows.length === 0) return '';
 
-        const portLabel = mode === 'dis' ? 'POD' : 'POD (Next)';
-        const th = (t, right) => `<th style="padding:5px 10px;text-align:${right ? 'right' : 'center'};color:var(--text-secondary);font-size:11px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,0.1);">${t}</th>`;
-        const td = (v, accent, right) => `<td style="padding:4px 10px;text-align:${right ? 'right' : 'center'};font-size:11px;white-space:nowrap;${accent ? `color:${accent};font-weight:bold;` : ''}">${v}</td>`;
-        const fmtCount = (f, e) => e > 0 ? `${f + e}(${e})` : `${f + e}`;
-        const fmtTeu = (teu, teuE) => teuE > 0 ? `${teu}(${teuE})` : `${teu}`;
+            const getTeu = (g) => (g.s20F + g.s20E) + (g.s40F + g.s40E + g.s40HF + g.s40HE + g.s45F + g.s45E) * 2;
+            const getTeuE = (g) => g.s20E + (g.s40E + g.s40HE + g.s45E) * 2;
 
-        if (rows.length === 0) return;
-        let html = `<div style="margin-top:0;"><div style="font-size:11px;font-weight:800;color:${filterColor};margin-bottom:6px;text-transform:uppercase;">${filterLabel}</div><div style="overflow-x:auto;"><table class="list-table" style="min-width:100%;border-radius:6px;background:rgba(0,0,0,0.15);margin-bottom:0;border-collapse:collapse;">
-            <thead style="background:rgba(255,255,255,0.06);">
-                <tr>
-                    ${th(portLabel)}
-                    ${th("20'(E)")}
-                    ${th("40'(E)")}
-                    ${th("40H'(E)")}
-                    ${th("45'(E)")}
-                    ${th('<span style="color:#38bdf8">RF</span>')}
-                    ${th('<span style="color:#ef4444">DG</span>')}
-                    ${th('<span style="color:var(--accent-color)">TTL</span>')}
-                    ${th('TEU F(E)')}
-                    ${th('WEIGHT(T)', true)}
-                </tr>
-            </thead>
-            <tbody>`;
+            const th = (t, right) => `<th style="padding:5px 10px;text-align:${right ? 'right' : 'center'};color:var(--text-secondary);font-size:11px;white-space:nowrap;border-bottom:1px solid rgba(255,255,255,0.1);">${t}</th>`;
+            const td = (v, accent, right) => `<td style="padding:4px 10px;text-align:${right ? 'right' : 'center'};font-size:11px;white-space:nowrap;${accent ? `color:${accent};font-weight:bold;` : ''}">${v}</td>`;
+            const fmtCount = (f, e) => e > 0 ? `${f + e}(${e})` : `${f + e}`;
+            const fmtTeu = (teu, teuE) => teuE > 0 ? `${teu}(${teuE})` : `${teu}`;
 
-        let totS20F = 0, totS20E = 0, totS40F = 0, totS40E = 0, tot40HF = 0, tot40HE = 0, tot45F = 0, tot45E = 0;
-        let totRF = 0, totDG = 0, totWgt = 0;
+            let html = `<div style="margin-top:0;;margin-bottom:12px;">
+                <div style="font-size:11px;font-weight:800;color:${filterColor};margin-bottom:6px;text-transform:uppercase;">${title}</div>
+                <div style="overflow-x:auto;">
+                <table class="list-table" style="min-width:100%;border-radius:6px;background:rgba(0,0,0,0.15);margin-bottom:0;border-collapse:collapse;">
+                <thead style="background:rgba(255,255,255,0.06);">
+                    <tr>
+                        ${th(portLabel)}
+                        ${th("20'(E)")}
+                        ${th("40'(E)")}
+                        ${th("40H'(E)")}
+                        ${th("45'(E)")}
+                        ${th('<span style="color:#38bdf8">RF</span>')}
+                        ${th('<span style="color:#ef4444">DG</span>')}
+                        ${th('<span style="color:#fb923c">OOG</span>')}
+                        ${th('<span style="color:var(--accent-color)">TTL</span>')}
+                        ${th('TEU F(E)')}
+                        ${th('WEIGHT(T)', true)}
+                    </tr>
+                </thead>
+                <tbody>`;
 
-        rows.forEach((g, i) => {
-            const ttl = g.s20F + g.s20E + g.s40F + g.s40E + g.s40HF + g.s40HE + g.s45F + g.s45E;
-            const teu = getTeu(g);
-            const teuE = getTeuE(g);
-            totS20F += g.s20F; totS20E += g.s20E;
-            totS40F += g.s40F; totS40E += g.s40E;
-            tot40HF += g.s40HF; tot40HE += g.s40HE;
-            tot45F += g.s45F; tot45E += g.s45E;
-            totRF += g.rf; totDG += g.dg; totWgt += g.weight;
+            let totS20F = 0, totS20E = 0, totS40F = 0, totS40E = 0, tot40HF = 0, tot40HE = 0, tot45F = 0, tot45E = 0;
+            let totRF = 0, totDG = 0, totOOG = 0, totWgt = 0;
 
-            html += `<tr style="border-top:1px solid rgba(255,255,255,0.05);${i % 2 === 1 ? 'background:rgba(255,255,255,0.02);' : ''}">
-                ${td('<b>' + g.port + '</b>', null)}
-                ${td(fmtCount(g.s20F, g.s20E), null)}
-                ${td(fmtCount(g.s40F, g.s40E), null)}
-                ${td(fmtCount(g.s40HF, g.s40HE), null)}
-                ${td(fmtCount(g.s45F, g.s45E), null)}
-                ${td(g.rf > 0 ? g.rf : '', g.rf > 0 ? '#38bdf8' : null)}
-                ${td(g.dg > 0 ? g.dg : '', g.dg > 0 ? '#ef4444' : null)}
-                ${td(ttl, 'var(--accent-color)')}
-                ${td(fmtTeu(teu, teuE), null)}
-                ${td(g.weight > 0 ? g.weight.toFixed(1) : '-', null, true)}
-            </tr>`;
-        });
+            rows.forEach((g, i) => {
+                const ttl = g.s20F + g.s20E + g.s40F + g.s40E + g.s40HF + g.s40HE + g.s45F + g.s45E;
+                const teu = getTeu(g); const teuE = getTeuE(g);
+                totS20F += g.s20F; totS20E += g.s20E; totS40F += g.s40F; totS40E += g.s40E;
+                tot40HF += g.s40HF; tot40HE += g.s40HE; tot45F += g.s45F; tot45E += g.s45E;
+                totRF += g.rf; totDG += g.dg; totOOG += g.oog; totWgt += g.weight;
 
-        const totTtl = totS20F + totS20E + totS40F + totS40E + tot40HF + tot40HE + tot45F + tot45E;
-        const totTeu = (totS20F + totS20E) + (totS40F + totS40E + tot40HF + tot40HE + tot45F + tot45E) * 2;
-        const totTeuE = totS20E + (totS40E + tot40HE + tot45E) * 2;
+                html += `<tr style="border-top:1px solid rgba(255,255,255,0.05);${i % 2 === 1 ? 'background:rgba(255,255,255,0.02);' : ''}">
+                    ${td('<b>' + g.port + '</b>', null)}
+                    ${td(fmtCount(g.s20F, g.s20E), null)}
+                    ${td(fmtCount(g.s40F, g.s40E), null)}
+                    ${td(fmtCount(g.s40HF, g.s40HE), null)}
+                    ${td(fmtCount(g.s45F, g.s45E), null)}
+                    ${td(g.rf > 0 ? g.rf : '', g.rf > 0 ? '#38bdf8' : null)}
+                    ${td(g.dg > 0 ? g.dg : '', g.dg > 0 ? '#ef4444' : null)}
+                    ${td(g.oog > 0 ? g.oog : '', g.oog > 0 ? '#fb923c' : null)}
+                    ${td(ttl, 'var(--accent-color)')}
+                    ${td(fmtTeu(teu, teuE), null)}
+                    ${td(g.weight > 0 ? g.weight.toFixed(1) : '-', null, true)}
+                </tr>`;
+            });
 
-        html += `<tr style="border-top:2px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.35);font-weight:bold;">
-                ${td('<b>TOTAL</b>', null)}
-                ${td(fmtCount(totS20F, totS20E), '#fff')}
-                ${td(fmtCount(totS40F, totS40E), '#fff')}
-                ${td(fmtCount(tot40HF, tot40HE), '#fff')}
-                ${td(fmtCount(tot45F, tot45E), '#fff')}
-                ${td(totRF > 0 ? totRF : '-', totRF > 0 ? '#38bdf8' : '#94a3b8')}
-                ${td(totDG > 0 ? totDG : '-', totDG > 0 ? '#ef4444' : '#94a3b8')}
-                ${td(totTtl, 'var(--accent-color)')}
-                ${td(fmtTeu(totTeu, totTeuE), '#fff')}
-                ${td(totWgt > 0 ? totWgt.toFixed(1) : '-', null, true)}
-            </tr>
-            </tbody></table></div></div>`;
+            const totTtl = totS20F + totS20E + totS40F + totS40E + tot40HF + tot40HE + tot45F + tot45E;
+            const totTeu = (totS20F + totS20E) + (totS40F + totS40E + tot40HF + tot40HE + tot45F + tot45E) * 2;
+            const totTeuE = totS20E + (totS40E + tot40HE + tot45E) * 2;
 
-        container.innerHTML = html;
+            html += `<tr style="border-top:2px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.35);font-weight:bold;">
+                    ${td('<b>TOTAL</b>', null)}
+                    ${td(fmtCount(totS20F, totS20E), '#fff')}
+                    ${td(fmtCount(totS40F, totS40E), '#fff')}
+                    ${td(fmtCount(tot40HF, tot40HE), '#fff')}
+                    ${td(fmtCount(tot45F, tot45E), '#fff')}
+                    ${td(totRF > 0 ? totRF : '-', totRF > 0 ? '#38bdf8' : '#94a3b8')}
+                    ${td(totDG > 0 ? totDG : '-', totDG > 0 ? '#ef4444' : '#94a3b8')}
+                    ${td(totOOG > 0 ? totOOG : '-', totOOG > 0 ? '#fb923c' : '#94a3b8')}
+                    ${td(totTtl, 'var(--accent-color)')}
+                    ${td(fmtTeu(totTeu, totTeuE), '#fff')}
+                    ${td(totWgt > 0 ? totWgt.toFixed(1) : '-', null, true)}
+                </tr></tbody></table></div></div>`;
+            return html;
+        };
+
+        const prefix = isAll ? 'ALL OPERATORS' : `SELECTED OPERATOR: ${this.selectedOperator}`;
+        let finalHtml = '';
+
+        if (mode === 'dis') {
+            // Discharge View: POL is the primary metric
+            const getPolKey = (c) => (c.pol || c.port || '-');
+            finalHtml += generateTableHTML(`${prefix} (BY POL)`, getPolKey, 'POL');
+
+            const getPodKey = (c) => (c.podr || c.pod || c.port || '-');
+            finalHtml += generateTableHTML(`${prefix} (BY POD)`, getPodKey, 'POD');
+        } else {
+            // Load View: POD is the primary metric
+            const getPodKey = (c) => (c.podr || c.pod || '-');
+            finalHtml += generateTableHTML(`${prefix} (BY POD)`, getPodKey, 'POD');
+
+            const getPolKey = (c) => (c.pol || c.port || '-');
+            finalHtml += generateTableHTML(`${prefix} (BY POL)`, getPolKey, 'POL');
+        }
+
+        container.innerHTML = finalHtml;
     }
 
     exportExcel() {

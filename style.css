@@ -3,7 +3,7 @@
     --panel-bg: rgba(30, 41, 59, 0.7);
     --accent-color: #38bdf8;
     --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
+    --text-secondary: #ffffff;
     --border-color: rgba(255, 255, 255, 0.1);
     --krpus-color: #22c55e;
     --krkan-color: #3b82f6;
@@ -236,7 +236,7 @@ button:hover {
     flex-direction: column;
     gap: 2px;
     padding: 10px;
-    background: #1e293b;
+    background: #f8f4ec;
     border-radius: 8px;
 }
 
@@ -259,8 +259,8 @@ button:hover {
 .slot {
     width: 18px;
     height: 18px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 0.1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.04);
+    border: 0.1px solid rgba(0, 0, 0, 0.12);
     font-size: 7px;
     display: flex;
     align-items: center;
@@ -272,10 +272,22 @@ button:hover {
     opacity: 0.75;
 }
 
+/* Center row 01 - full column highlight */
+.slot.center-col {
+    background: rgba(160, 160, 160, 0.18);
+    border-color: rgba(120, 120, 120, 0.2);
+}
+
+.slot.center-col.occupied {
+    /* occupied slots keep their color, just add subtle border */
+    border-color: rgba(100, 100, 100, 0.35);
+}
+
 /* Tier number labels (right side of each row) */
 .tier-label {
-    font-size: 7px;
-    color: rgba(148, 163, 184, 0.7);
+    font-size: 9px;
+    color: #000;
+    font-weight: 800;
     display: flex;
     align-items: center;
     justify-content: flex-start;
@@ -285,8 +297,9 @@ button:hover {
 
 /* Row number labels (bottom row of grid) */
 .row-label {
-    font-size: 6px;
-    color: rgba(148, 163, 184, 0.7);
+    font-size: 8px;
+    color: #000;
+    font-weight: 800;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -294,11 +307,13 @@ button:hover {
     /* horizontal – no rotation */
 }
 
-/* Center row 01 - highlight in red */
+/* Center row 01 label */
 .row-label.center-row {
-    color: #ef4444;
-    font-weight: 700;
-    font-size: 7px;
+    color: #000;
+    font-weight: 900;
+    font-size: 9px;
+    background: rgba(150, 150, 150, 0.3);
+    border-radius: 2px;
 }
 
 .slot.occupied {
