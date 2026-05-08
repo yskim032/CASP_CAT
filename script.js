@@ -1680,8 +1680,7 @@ class BayplanSimulator {
             <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">GC</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Bay Groups</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Total Moves</th>
-            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Start</th>
-            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">End</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Working Time</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Work Hrs</th>
         </tr></thead>`;
 
@@ -1698,7 +1697,6 @@ class BayplanSimulator {
                 <td style="padding:7px 12px;color:${pal.label};font-weight:800;font-size:13px;">GC ${gi + 1}</td>
                 <td style="padding:7px 12px;text-align:center;color:#e2e8f0;">${sec.length}</td>
                 <td style="padding:7px 12px;text-align:center;color:#e2e8f0;font-weight:700;">${totalMoves}</td>
-                <td style="padding:7px 12px;text-align:center;color:#94a3b8;">00:00</td>
                 <td style="padding:7px 12px;text-align:center;color:#94a3b8;">${toHHMM(gangEndTimes[gi])}</td>
                 <td style="padding:7px 12px;text-align:center;color:#fbbf24;font-weight:700;">${gangEndTimes[gi].toFixed(1)}h</td>`;
             tbody.appendChild(tr);
