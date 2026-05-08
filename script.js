@@ -2615,18 +2615,30 @@ class BayplanSimulator {
     async _savePayloadToStorage(docId, disData, lodData) {
         const json = JSON.stringify({ disData, lodData });
         const blob = new Blob([json], { type: 'application/json' });
-        const size = blob.size; // capture size before upload
-        const ref = window.storage.ref(`bayplanPayload/${docId}.json`);
+        const size = blob.size;
+        const path = `bayplanPayload/${docId}.json`;
+        const ref = window.storage.ref(path);
         await ref.put(blob);
         const url = await ref.getDownloadURL();
-        return { url, size };
+        return { url, size, path };
     }
 
-    // Load EDI payload from Firebase Storage
-    async _loadPayloadFromStorage(url) {
-        const res = await fetch(url);
-        const { disData, lodData } = await res.json();
-        return { disData: disData || [], lodData: lodData || [] };
+    // Load EDI payload from Firebase Storage (CORS-safe via fresh URL)
+    async _loadPayloadFromStorage(path) {
+        // Get fresh download URL via Storage SDK (includes valid auth token)
+        const ref = window.storage.ref(path);
+        const url = await ref.getDownloadURL();
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.responseType = 'json';
+            xhr.onload = () => resolve({
+                disData: xhr.response?.disData || [],
+                lodData: xhr.response?.lodData || []
+            });
+            xhr.onerror = () => reject(new Error('XHR fetch failed'));
+            xhr.open('GET', url);
+            xhr.send();
+        });
     }
 
     async saveHistory() {
@@ -2668,8 +2680,8 @@ class BayplanSimulator {
             }
 
             // Upload EDI payload to Firebase Storage (no size limit)
-            const { url: payloadUrl, size: payloadSize } = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
-            await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl, payloadSize });
+            const { url: payloadUrl, size: payloadSize, path: payloadPath } = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
+            await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl, payloadSize, payloadPath });
 
             document.getElementById('histMemo').value = '';
             this.renderHistoryTable();
@@ -2712,14 +2724,16 @@ class BayplanSimulator {
             if (!metaSnap.exists) return;
             const r = metaSnap.data();
 
-            if (!r.payloadUrl) {
+            if (!r.payloadPath && !r.payloadUrl) {
                 alert('이 레코드에는 EDI 데이터가 없습니다.\nEDI 파일을 다시 드롭하여 로드해주세요.');
                 return;
             }
             if (!confirm('Load this session? Current unsaved work will be lost.')) return;
 
-            // Download EDI payload from Firebase Storage
-            const { disData, lodData } = await this._loadPayloadFromStorage(r.payloadUrl);
+            // Use path for fresh SDK URL, fall back to stored URL
+            const { disData, lodData } = await this._loadPayloadFromStorage(
+                r.payloadPath || `bayplanPayload/${id}.json`
+            );
 
             this.disContainers = disData;
             this.lodContainers = lodData;
@@ -2829,7 +2843,7 @@ class BayplanSimulator {
                 <td style="text-align:center;white-space:nowrap;width:1%;color:#94a3b8;font-size:11px;">${this._fmtBytes((r.metaSize || 0) + (r.payloadSize || 0))}</td>
                 <td style="text-align:center;width:1%;">
                     <div style="display:flex;gap:5px;justify-content:center;">
-                        ${r.payloadUrl ? `<button onclick="sim.loadHistoryData('${r.id}')" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>` : ''}
+                        ${(r.payloadUrl || r.payloadPath) ? `<button onclick="sim.loadHistoryData('${r.id}')" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>` : ''}
                         <button onclick="sim.editHistoryRecord('${r.id}')" title="Edit Memo/Values" style="background:#eab308;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Edit</button>
                         <button onclick="sim.deleteHistoryRecord('${r.id}')" title="Delete Record" style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕</button>
                     </div>
