@@ -854,11 +854,23 @@ class BayplanSimulator {
             scrollArea.scrollTop = scrollTop - walkY;
         });
 
-        // Info panel
+        // Info panel (Initialize with current selection/highlight state)
         const infoPanel = document.createElement('div');
         infoPanel.id = 'ctrInfoPanel';
-        infoPanel.innerHTML = `<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">Click a container<br>to see details</div>`;
         infoPanel.style.cssText = 'width:240px;flex-shrink:0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px;position:sticky;top:0;max-height:85vh;overflow-y:auto;scrollbar-width:thin;';
+
+        if (this.highlightContainerIds && this.highlightContainerIds.size > 0) {
+            this.showMultiContainerInfo(Array.from(this.highlightContainerIds), infoPanel);
+        } else if (this.selectedContainerId) {
+            const selC = this.getAllVisibleContainers().find(x => x.id === this.selectedContainerId);
+            if (selC) {
+                this.showContainerInfo(selC, infoPanel);
+            } else {
+                infoPanel.innerHTML = `<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">Click a container<br>to see details</div>`;
+            }
+        } else {
+            infoPanel.innerHTML = `<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">Click a container<br>to see details</div>`;
+        }
 
         bayCodes.forEach(bayCode => {
             const baySection = document.createElement('div');
@@ -959,7 +971,6 @@ class BayplanSimulator {
                     slot.addEventListener('click', (e) => {
                         e.stopPropagation();
                         this.selectedContainerId = found.id;
-                        this.showContainerInfo(found, infoPanel);
                         this.openDetailedBayGroup(this.currentBayGroupCodes);
                     });
                 }
@@ -1048,12 +1059,18 @@ class BayplanSimulator {
 
             section.addEventListener('click', () => {
                 this.selectedContainerId = id;
-                this.showMultiContainerInfo(ids, panel); // fast re-render of panel
-                this.openDetailedBayGroup(this.currentBayGroupCodes); // re-render grid
+                this.openDetailedBayGroup(this.currentBayGroupCodes); // re-render grid & panel
             });
 
             this.showContainerInfo(c, section);
             containerWrapper.appendChild(section);
+
+            // Auto-scroll selected item into view within the panel
+            if (this.selectedContainerId === id) {
+                setTimeout(() => {
+                    section.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, 50);
+            }
         });
         panel.appendChild(containerWrapper);
     }
