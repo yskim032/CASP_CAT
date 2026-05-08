@@ -2615,10 +2615,10 @@ class BayplanSimulator {
     async _savePayloadToStorage(docId, disData, lodData) {
         const json = JSON.stringify({ disData, lodData });
         const blob = new Blob([json], { type: 'application/json' });
+        const size = blob.size; // capture size before upload
         const ref = window.storage.ref(`bayplanPayload/${docId}.json`);
-        const snapshot = await ref.put(blob);
+        await ref.put(blob);
         const url = await ref.getDownloadURL();
-        const size = snapshot.metadata.size; // bytes
         return { url, size };
     }
 
@@ -2747,7 +2747,14 @@ class BayplanSimulator {
     async deleteHistoryRecord(id) {
         if (!confirm('Delete this record?')) return;
         try {
+            // Delete Firestore metadata
             await window.db.collection('bayplanHistory').doc(id).delete();
+            // Delete Storage file
+            try {
+                await window.storage.ref(`bayplanPayload/${id}.json`).delete();
+            } catch (se) {
+                console.warn('Storage file not found or already deleted:', se.message);
+            }
             this.renderHistoryTable();
         } catch (e) {
             console.error('Error deleting record:', e);
@@ -2848,6 +2855,12 @@ class BayplanSimulator {
             const history = await this.getHistory();
             for (const r of history) {
                 await window.db.collection('bayplanHistory').doc(r.id).delete();
+                // Delete Storage file
+                try {
+                    await window.storage.ref(`bayplanPayload/${r.id}.json`).delete();
+                } catch (se) {
+                    console.warn('Storage file not found:', se.message);
+                }
             }
             this.renderHistoryTable();
             alert('All records cleared from Firebase.');
