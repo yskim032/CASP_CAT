@@ -71,7 +71,8 @@ class BayplanSimulator {
         this.compMasterSort = { col: 'match', asc: false };
         this.compTargetSort = { col: 'match', asc: false };
 
-        this.highlightContainerId = null; // For Find feature
+        this.highlightContainerIds = new Set(); // For Find feature (multiple)
+        this.searchedIds = new Set(); // All IDs from last search
         this.activeSimMode = 'A'; // Tracks simulation tab (Mode A or B)
 
         this.initEventListeners();
@@ -855,7 +856,7 @@ class BayplanSimulator {
         const infoPanel = document.createElement('div');
         infoPanel.id = 'ctrInfoPanel';
         infoPanel.innerHTML = `<div style="color:var(--text-secondary);font-size:13px;text-align:center;padding:20px 0;">Click a container<br>to see details</div>`;
-        infoPanel.style.cssText = 'width:210px;flex-shrink:0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:0;padding:14px;position:sticky;top:0;';
+        infoPanel.style.cssText = 'width:240px;flex-shrink:0;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:14px;position:sticky;top:0;max-height:85vh;overflow-y:auto;scrollbar-width:thin;';
 
         bayCodes.forEach(bayCode => {
             const baySection = document.createElement('div');
@@ -1009,14 +1010,37 @@ class BayplanSimulator {
         if (c.isRestow) rows.push(['', '<span style="color:#f59e0b">♻ RESTOW</span>']);
 
         panel.innerHTML = `
-            <div style="font-size:13px;font-weight:700;color:var(--accent-color);margin-bottom:10px;">📦 Container Info</div>
-            <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                ${rows.map(([k, v]) => `
-                <tr>
-                    <td style="color:var(--text-secondary);padding:4px 6px 4px 0;white-space:nowrap;">${k}</td>
-                    <td style="padding:4px 0;word-break:break-all;">${v}</td>
-                </tr>`).join('')}
-            </table>`;
+        <div style="font-size:13px;font-weight:700;color:var(--accent-color);margin-bottom:10px;">📦 Container Info</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            ${rows.map(([k, v]) => `
+            <tr>
+                <td style="color:var(--text-secondary);padding:4px 6px 4px 0;white-space:nowrap;">${k}</td>
+                <td style="padding:4px 0;word-break:break-all;">${v}</td>
+            </tr>`).join('')}
+        </table>`;
+    }
+
+    // Show multiple containers in the info panel (vertical list)
+    showMultiContainerInfo(ids, panel) {
+        if (!panel) return;
+        panel.innerHTML = `<div style="font-size:13px;font-weight:800;color:#facc15;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid rgba(250,204,21,0.3);">🔍 Found: ${ids.length} Containers</div>`;
+
+        const containerWrapper = document.createElement('div');
+        containerWrapper.style.display = 'flex';
+        containerWrapper.style.flexDirection = 'column';
+        containerWrapper.style.gap = '25px';
+
+        const allVisible = this.getAllVisibleContainers();
+        ids.forEach(id => {
+            const c = allVisible.find(x => x.id === id);
+            if (!c) return;
+
+            const section = document.createElement('div');
+            section.style.cssText = 'background:rgba(255,255,255,0.02); border-radius:6px; padding:10px; border-left:4px solid #facc15;';
+            this.showContainerInfo(c, section);
+            containerWrapper.appendChild(section);
+        });
+        panel.appendChild(containerWrapper);
     }
 
     navigateBay(offset) {
@@ -1077,13 +1101,15 @@ class BayplanSimulator {
                 element.innerHTML = '';
                 const mappedType = this.getMappedType(found.type);
                 element.title = `${found.id} (${mappedType})\nPort: ${found.port}`;
-                if (this.highlightContainerId && found.id === this.highlightContainerId) {
-                    // Strong red highlight for Find feature
-                    element.style.outline = '3px solid #ef4444';
+                if (this.highlightContainerIds && this.highlightContainerIds.has(found.id)) {
+                    // Bold yellow highlight for Find feature
+                    element.style.outline = '4px solid #facc15';
                     element.style.outlineOffset = '-2px';
-                    element.style.boxShadow = 'inset 0 0 6px rgba(239,68,68,0.6), 0 0 8px #ef4444';
+                    element.style.boxShadow = '0 0 15px #facc15, inset 0 0 8px rgba(0,0,0,0.5)';
                     element.style.zIndex = '10';
                     element.style.position = 'relative';
+                    element.style.transform = 'scale(1.15)';
+                    element.style.borderRadius = '2px';
                 } else if (found.dg) {
                     element.style.outline = '2px solid #ef4444';
                     element.style.outlineOffset = '-2px';
@@ -1895,7 +1921,7 @@ class BayplanSimulator {
 
         if (!berthHours || isNaN(berthHours)) {
             resultEl.innerHTML =
-                `<div><span style="color:#fbbf24;font-weight:700;">ETB</span> <span style="color:white;font-size:13px;font-weight:800;">${etbStr}</span></div>` +
+                `<div><span style="color:#fbbf24;font-weight:700;min-width:34px;display:inline-block;">ETB</span> <span style="color:white;font-size:13px;font-weight:800;">${etbStr}</span></div>` +
                 `<div style="color:rgba(255,255,255,0.35);font-size:10px;">EST. BERTH TIME을 먼저 계산하세요.</div>`;
             return;
         }
@@ -2912,6 +2938,8 @@ class BayplanSimulator {
             .map(line => line.split(/[\t,]/)[0].trim().toUpperCase())
             .filter(Boolean);
 
+        this.searchedIds = new Set(ids);
+
         const disMap = new Map(this.disContainers.map(c => [c.id.toUpperCase(), c]));
         const lodMap = new Map(this.lodContainers.map(c => [c.id.toUpperCase(), c]));
 
@@ -2972,16 +3000,12 @@ class BayplanSimulator {
     }
 
     openBayWithHighlight(containerId) {
-        // Find the container in dis + lod
         const upper = containerId.toUpperCase();
         const c = this.disContainers.find(c => c.id.toUpperCase() === upper)
             || this.lodContainers.find(c => c.id.toUpperCase() === upper);
         if (!c || !c.pos) return;
 
         const bayCode = c.pos.substring(0, 2);
-
-        // Set highlight target
-        this.highlightContainerId = c.id;
 
         // Switch to General Stowage tab
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -2991,22 +3015,42 @@ class BayplanSimulator {
         const stowView = document.getElementById('stowageView');
         if (stowView) stowView.classList.remove('hidden');
 
-        // Find the matching bay group in navigation list
+        // Determine target bay group
         let targetGroup = null;
         if (this.bayGroupsForNavigation) {
             targetGroup = this.bayGroupsForNavigation.find(g => g.includes(bayCode));
         }
         const openCodes = targetGroup || [bayCode];
 
-        // Open the bay detail modal with highlight
+        // Find all searched containers in this bay group
+        this.highlightContainerIds = new Set();
+        const allVisible = this.getAllVisibleContainers();
+        allVisible.forEach(vc => {
+            if (this.searchedIds && this.searchedIds.has(vc.id.toUpperCase())) {
+                const vBay = vc.pos.substring(0, 2);
+                if (openCodes.includes(vBay)) {
+                    this.highlightContainerIds.add(vc.id);
+                }
+            }
+        });
+
+        // Fallback if none found via searchedIds (manual click?)
+        if (this.highlightContainerIds.size === 0) {
+            this.highlightContainerIds.add(c.id);
+        }
+
+        // Open the bay detail modal
         this.openDetailedBayGroup(openCodes);
 
-        // After modal renders, auto-show container info in the panel
+        // Update info panel with all found containers in this bay
         setTimeout(() => {
             const infoPanel = document.getElementById('ctrInfoPanel');
-            if (infoPanel && c) this.showContainerInfo(c, infoPanel);
+            if (infoPanel) {
+                this.showMultiContainerInfo(Array.from(this.highlightContainerIds), infoPanel);
+            }
         }, 150);
     }
+
     // ─────────────────────────────────────────────────────
     // COMPARE
     // ─────────────────────────────────────────────────────
