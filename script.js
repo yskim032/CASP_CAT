@@ -2650,6 +2650,10 @@ class BayplanSimulator {
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
 
+        // Calculate Firestore document size
+        const metaSize = new Blob([JSON.stringify(meta)]).size;
+        meta.metaSize = metaSize;
+
         try {
             let docId;
             if (this.editingHistId) {
@@ -2780,7 +2784,7 @@ class BayplanSimulator {
         const statsEl = document.getElementById('historyStorageStats');
         if (statsEl) {
             const FREE_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
-            const totalBytes = history.reduce((s, r) => s + (r.payloadSize || 0), 0);
+            const totalBytes = history.reduce((s, r) => s + (r.metaSize || 0) + (r.payloadSize || 0), 0);
             const pct = ((totalBytes / FREE_BYTES) * 100).toFixed(3);
             const vesselCount = history.length;
             statsEl.innerHTML = `
@@ -2822,7 +2826,7 @@ class BayplanSimulator {
                 <td style="text-align:center;width:1%;">${r.gang || '-'}</td>
                 <td style="text-align:center;width:1%;">${r.prod || '-'}</td>
                 <td style="color:var(--text-secondary);font-size:12px;white-space:normal;text-align:left;width:100%;">${r.memo || ''}</td>
-                <td style="text-align:center;white-space:nowrap;width:1%;color:#94a3b8;font-size:11px;">${this._fmtBytes(r.payloadSize)}</td>
+                <td style="text-align:center;white-space:nowrap;width:1%;color:#94a3b8;font-size:11px;">${this._fmtBytes((r.metaSize || 0) + (r.payloadSize || 0))}</td>
                 <td style="text-align:center;width:1%;">
                     <div style="display:flex;gap:5px;justify-content:center;">
                         ${r.payloadUrl ? `<button onclick="sim.loadHistoryData('${r.id}')" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>` : ''}
