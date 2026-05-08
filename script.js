@@ -2612,13 +2612,10 @@ class BayplanSimulator {
     }
 
     async saveHistory() {
-        if (!this.disContainers.length && !this.lodContainers.length) {
-            alert('No data to save. Load EDI files first.');
-            return;
-        }
-
         const dateVal = document.getElementById('histDate').value;
         const vesselVal = document.getElementById('histVessel').value;
+        if (!vesselVal) { alert('Please load EDI data first.'); return; }
+
         const portVal = document.getElementById('histPort').value;
         const disVal = parseInt(document.getElementById('histDis').value) || 0;
         const lodVal = parseInt(document.getElementById('histLod').value) || 0;
@@ -2629,7 +2626,7 @@ class BayplanSimulator {
         const prodVal = document.getElementById('histProd').value;
         const memoVal = document.getElementById('histMemo').value;
 
-        // Metadata record (small - no EDI payload)
+        // Metadata only (no EDI payload - Firestore 1MB limit)
         const meta = {
             date: dateVal,
             vessel: vesselVal,
@@ -2644,31 +2641,18 @@ class BayplanSimulator {
             memo: memoVal,
             vesselName: this.vessel,
             voyageName: this.voyage,
-            hasPayload: true,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
 
-        // EDI payload record (large - stored in separate collection)
-        const payload = {
-            disData: this.disContainers,
-            lodData: this.lodContainers
-        };
-
         try {
-            let docId;
             if (this.editingHistId) {
                 await window.db.collection('bayplanHistory').doc(this.editingHistId).set(meta);
-                docId = this.editingHistId;
                 this.editingHistId = null;
                 alert('Record updated in Firebase!');
             } else {
-                const docRef = await window.db.collection('bayplanHistory').add(meta);
-                docId = docRef.id;
+                await window.db.collection('bayplanHistory').add(meta);
                 alert('Record saved to Firebase!');
             }
-            // Save payload to a sub-collection to avoid 1MB doc limit
-            await window.db.collection('bayplanPayload').doc(docId).set(payload);
-
             document.getElementById('histMemo').value = '';
             this.renderHistoryTable();
         } catch (e) {
@@ -2705,54 +2689,7 @@ class BayplanSimulator {
     }
 
     async loadHistoryData(id) {
-        try {
-            const metaSnap = await window.db.collection('bayplanHistory').doc(id).get();
-            if (!metaSnap.exists) return;
-            const r = metaSnap.data();
-
-            // Load EDI payload from separate collection
-            let disData = [], lodData = [];
-            try {
-                const payloadSnap = await window.db.collection('bayplanPayload').doc(id).get();
-                if (payloadSnap.exists) {
-                    disData = payloadSnap.data().disData || [];
-                    lodData = payloadSnap.data().lodData || [];
-                }
-            } catch (pe) {
-                console.warn('Could not load payload:', pe);
-            }
-
-            if (!disData.length && !lodData.length) {
-                alert("This record doesn't contain full EDI payloads to load.");
-                return;
-            }
-            if (!confirm('Load this session? Current unsaved work will be lost.')) return;
-
-            this.disContainers = disData;
-            this.lodContainers = lodData;
-            this.vessel = r.vesselName || '';
-            this.voyage = r.voyageName || '';
-            this.targetPort = r.port || '';
-
-            // Update UI controls
-            const targetSel = document.getElementById('targetPort');
-            if (targetSel && this.targetPort) targetSel.value = this.targetPort;
-
-            const vesselInfo = document.getElementById('vesselInfo');
-            if (vesselInfo) {
-                vesselInfo.textContent = (this.vessel && this.voyage) ? `${this.vessel} / ${this.voyage}` : 'NO DATA LOADED';
-            }
-
-            this.processCombined();
-
-            const stowageTab = document.querySelector('.tab[data-tab="stowage"]');
-            if (stowageTab) stowageTab.click();
-
-            alert('Session loaded successfully!');
-        } catch (e) {
-            console.error('Error loading history data:', e);
-            alert('Failed to load from Firebase:\n' + e.message);
-        }
+        alert('EDI Load 기능은 지원되지 않습니다.\n해당 항차의 EDI 파일을 다시 드롭(Drop)하여 로드해주세요.');
     }
 
     async deleteHistoryRecord(id) {
@@ -2800,7 +2737,6 @@ class BayplanSimulator {
                 <td style="color:var(--text-secondary);font-size:12px;white-space:normal;text-align:left;width:100%;">${r.memo || ''}</td>
                 <td style="text-align:center;width:1%;">
                     <div style="display:flex;gap:5px;justify-content:center;">
-                        <button onclick="sim.loadHistoryData('${r.id}')" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>
                         <button onclick="sim.editHistoryRecord('${r.id}')" title="Edit Memo/Values" style="background:#eab308;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Edit</button>
                         <button onclick="sim.deleteHistoryRecord('${r.id}')" title="Delete Record" style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕</button>
                     </div>
