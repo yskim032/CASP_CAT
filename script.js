@@ -2611,48 +2611,60 @@ class BayplanSimulator {
         }
     }
 
+    // Save EDI payload to Firebase Storage as JSON (no size limit)
+    async _savePayloadToStorage(docId, disData, lodData) {
+        const json = JSON.stringify({ disData, lodData });
+        const blob = new Blob([json], { type: 'application/json' });
+        const ref = window.storage.ref(`bayplanPayload/${docId}.json`);
+        await ref.put(blob);
+        return await ref.getDownloadURL();
+    }
+
+    // Load EDI payload from Firebase Storage
+    async _loadPayloadFromStorage(url) {
+        const res = await fetch(url);
+        const { disData, lodData } = await res.json();
+        return { disData: disData || [], lodData: lodData || [] };
+    }
+
     async saveHistory() {
-        const dateVal = document.getElementById('histDate').value;
         const vesselVal = document.getElementById('histVessel').value;
         if (!vesselVal) { alert('Please load EDI data first.'); return; }
 
-        const portVal = document.getElementById('histPort').value;
-        const disVal = parseInt(document.getElementById('histDis').value) || 0;
-        const lodVal = parseInt(document.getElementById('histLod').value) || 0;
-        const twinVal = parseInt(document.getElementById('histTwin').value) || 0;
-        const restowVal = parseInt(document.getElementById('histRestow').value) || 0;
-        const berthVal = document.getElementById('histBerth').value;
-        const gangVal = document.getElementById('histGang').value;
-        const prodVal = document.getElementById('histProd').value;
-        const memoVal = document.getElementById('histMemo').value;
-
-        // Metadata only (no EDI payload - Firestore 1MB limit)
         const meta = {
-            date: dateVal,
+            date: document.getElementById('histDate').value,
             vessel: vesselVal,
-            port: portVal,
-            dis: disVal,
-            lod: lodVal,
-            twin: twinVal,
-            restow: restowVal,
-            berth: berthVal,
-            gang: gangVal,
-            prod: prodVal,
-            memo: memoVal,
+            port: document.getElementById('histPort').value,
+            dis: parseInt(document.getElementById('histDis').value) || 0,
+            lod: parseInt(document.getElementById('histLod').value) || 0,
+            twin: parseInt(document.getElementById('histTwin').value) || 0,
+            restow: parseInt(document.getElementById('histRestow').value) || 0,
+            berth: document.getElementById('histBerth').value,
+            gang: document.getElementById('histGang').value,
+            prod: document.getElementById('histProd').value,
+            memo: document.getElementById('histMemo').value,
             vesselName: this.vessel,
             voyageName: this.voyage,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
 
         try {
+            let docId;
             if (this.editingHistId) {
                 await window.db.collection('bayplanHistory').doc(this.editingHistId).set(meta);
+                docId = this.editingHistId;
                 this.editingHistId = null;
                 alert('Record updated in Firebase!');
             } else {
-                await window.db.collection('bayplanHistory').add(meta);
+                const ref = await window.db.collection('bayplanHistory').add(meta);
+                docId = ref.id;
                 alert('Record saved to Firebase!');
             }
+
+            // Upload EDI payload to Firebase Storage (no size limit)
+            const payloadUrl = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
+            await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl });
+
             document.getElementById('histMemo').value = '';
             this.renderHistoryTable();
         } catch (e) {
@@ -2689,7 +2701,45 @@ class BayplanSimulator {
     }
 
     async loadHistoryData(id) {
-        alert('EDI Load 기능은 지원되지 않습니다.\n해당 항차의 EDI 파일을 다시 드롭(Drop)하여 로드해주세요.');
+        try {
+            const metaSnap = await window.db.collection('bayplanHistory').doc(id).get();
+            if (!metaSnap.exists) return;
+            const r = metaSnap.data();
+
+            if (!r.payloadUrl) {
+                alert('이 레코드에는 EDI 데이터가 없습니다.\nEDI 파일을 다시 드롭하여 로드해주세요.');
+                return;
+            }
+            if (!confirm('Load this session? Current unsaved work will be lost.')) return;
+
+            // Download EDI payload from Firebase Storage
+            const { disData, lodData } = await this._loadPayloadFromStorage(r.payloadUrl);
+
+            this.disContainers = disData;
+            this.lodContainers = lodData;
+            this.vessel = r.vesselName || '';
+            this.voyage = r.voyageName || '';
+            this.targetPort = r.port || '';
+
+            const targetSel = document.getElementById('targetPort');
+            if (targetSel && this.targetPort) targetSel.value = this.targetPort;
+
+            const vesselInfo = document.getElementById('vesselInfo');
+            if (vesselInfo) {
+                vesselInfo.textContent = (this.vessel && this.voyage)
+                    ? `${this.vessel} / ${this.voyage}` : 'NO DATA LOADED';
+            }
+
+            this.processCombined();
+
+            const stowageTab = document.querySelector('.tab[data-tab="stowage"]');
+            if (stowageTab) stowageTab.click();
+
+            alert('Session loaded successfully!');
+        } catch (e) {
+            console.error('Error loading history data:', e);
+            alert('Failed to load from Firebase:\n' + e.message);
+        }
     }
 
     async deleteHistoryRecord(id) {
@@ -2737,6 +2787,7 @@ class BayplanSimulator {
                 <td style="color:var(--text-secondary);font-size:12px;white-space:normal;text-align:left;width:100%;">${r.memo || ''}</td>
                 <td style="text-align:center;width:1%;">
                     <div style="display:flex;gap:5px;justify-content:center;">
+                        ${r.payloadUrl ? `<button onclick="sim.loadHistoryData('${r.id}')" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>` : ''}
                         <button onclick="sim.editHistoryRecord('${r.id}')" title="Edit Memo/Values" style="background:#eab308;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Edit</button>
                         <button onclick="sim.deleteHistoryRecord('${r.id}')" title="Delete Record" style="background:transparent;border:1px solid #ef4444;color:#ef4444;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">✕</button>
                     </div>
