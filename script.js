@@ -2629,7 +2629,8 @@ class BayplanSimulator {
         const prodVal = document.getElementById('histProd').value;
         const memoVal = document.getElementById('histMemo').value;
 
-        const record = {
+        // Metadata record (small - no EDI payload)
+        const meta = {
             date: dateVal,
             vessel: vesselVal,
             port: portVal,
@@ -2643,25 +2644,36 @@ class BayplanSimulator {
             memo: memoVal,
             vesselName: this.vessel,
             voyageName: this.voyage,
-            disData: this.disContainers,
-            lodData: this.lodContainers,
+            hasPayload: true,
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
 
+        // EDI payload record (large - stored in separate collection)
+        const payload = {
+            disData: this.disContainers,
+            lodData: this.lodContainers
+        };
+
         try {
+            let docId;
             if (this.editingHistId) {
-                await window.db.collection('bayplanHistory').doc(this.editingHistId).set(record);
+                await window.db.collection('bayplanHistory').doc(this.editingHistId).set(meta);
+                docId = this.editingHistId;
                 this.editingHistId = null;
                 alert('Record updated in Firebase!');
             } else {
-                await window.db.collection('bayplanHistory').add(record);
+                const docRef = await window.db.collection('bayplanHistory').add(meta);
+                docId = docRef.id;
                 alert('Record saved to Firebase!');
             }
+            // Save payload to a sub-collection to avoid 1MB doc limit
+            await window.db.collection('bayplanPayload').doc(docId).set(payload);
+
             document.getElementById('histMemo').value = '';
             this.renderHistoryTable();
         } catch (e) {
-            console.error("Error saving record: ", e);
-            alert('Failed to save session data to Firebase. See console for details.');
+            console.error('Error saving record:', e);
+            alert('Failed to save to Firebase:\n' + e.message);
         }
     }
 
@@ -2694,18 +2706,30 @@ class BayplanSimulator {
 
     async loadHistoryData(id) {
         try {
-            const docSnap = await window.db.collection('bayplanHistory').doc(id).get();
-            if (!docSnap.exists) return;
+            const metaSnap = await window.db.collection('bayplanHistory').doc(id).get();
+            if (!metaSnap.exists) return;
+            const r = metaSnap.data();
 
-            const r = docSnap.data();
-            if (!r.disData && !r.lodData) {
+            // Load EDI payload from separate collection
+            let disData = [], lodData = [];
+            try {
+                const payloadSnap = await window.db.collection('bayplanPayload').doc(id).get();
+                if (payloadSnap.exists) {
+                    disData = payloadSnap.data().disData || [];
+                    lodData = payloadSnap.data().lodData || [];
+                }
+            } catch (pe) {
+                console.warn('Could not load payload:', pe);
+            }
+
+            if (!disData.length && !lodData.length) {
                 alert("This record doesn't contain full EDI payloads to load.");
                 return;
             }
             if (!confirm('Load this session? Current unsaved work will be lost.')) return;
 
-            this.disContainers = r.disData || [];
-            this.lodContainers = r.lodData || [];
+            this.disContainers = disData;
+            this.lodContainers = lodData;
             this.vessel = r.vesselName || '';
             this.voyage = r.voyageName || '';
             this.targetPort = r.port || '';
@@ -2719,16 +2743,15 @@ class BayplanSimulator {
                 vesselInfo.textContent = (this.vessel && this.voyage) ? `${this.vessel} / ${this.voyage}` : 'NO DATA LOADED';
             }
 
-            // Process data through simulator engine
             this.processCombined();
 
-            // Switch back to General Stowage tab
             const stowageTab = document.querySelector('.tab[data-tab="stowage"]');
             if (stowageTab) stowageTab.click();
 
             alert('Session loaded successfully!');
         } catch (e) {
-            console.error("Error loading history data: ", e);
+            console.error('Error loading history data:', e);
+            alert('Failed to load from Firebase:\n' + e.message);
         }
     }
 
