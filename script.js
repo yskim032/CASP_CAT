@@ -922,8 +922,8 @@ class BayplanSimulator {
         const natW = gridsWrapper.scrollWidth;
         const natH = gridsWrapper.scrollHeight;
 
-        // 사용자 요청에 따라 기본 사이즈를 120%로 고정
-        let scale = 1.2;
+        // 사용자 요청에 따라 기본 사이즈를 80%로 고정
+        let scale = 0.8;
 
         this.autoScale = scale; // Save auto-fit ratio
 
