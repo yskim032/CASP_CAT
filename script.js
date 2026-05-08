@@ -2750,7 +2750,7 @@ class BayplanSimulator {
                     ? `${this.vessel} / ${this.voyage}` : 'NO DATA LOADED';
             }
 
-            this.processCombined();
+            this.updateUI();
 
             const stowageTab = document.querySelector('.tab[data-tab="stowage"]');
             if (stowageTab) stowageTab.click();
@@ -2855,8 +2855,21 @@ class BayplanSimulator {
     async exportHistoryCSV() {
         const history = await this.getHistory();
         if (history.length === 0) { alert('No history records to export.'); return; }
-        const headers = ['Date', 'Vessel/Voy', 'Port', 'D', 'L', 'Twin', 'Restow', 'Berth(h)', 'Gang', 'Productivity', 'Memo'];
-        const rows = history.map(r => [r.date, r.vessel, r.port, r.dis, r.lod, r.twin, r.restow, r.berth, r.gang, r.prod, r.memo]);
+        const headers = ['Date', 'Vessel/Voy', 'Port', 'D', 'L', 'Twin', 'Restow', 'Berth(h)', 'Gang', 'Productivity', 'Memo', 'Total Size'];
+        const rows = history.map(r => [
+            r.date,
+            r.vessel,
+            r.port,
+            r.dis,
+            r.lod,
+            r.twin,
+            r.restow,
+            r.berth,
+            r.gang,
+            r.prod,
+            r.memo,
+            this._fmtBytes((r.metaSize || 0) + (r.payloadSize || 0))
+        ]);
         const csv = [headers, ...rows].map(row => row.map(c => '"' + String(c || '').replace(/"/g, '""') + '"').join(',')).join('\n');
         const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
