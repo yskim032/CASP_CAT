@@ -2741,7 +2741,7 @@ class BayplanSimulator {
                 <td style="text-align:center;">${r.berth || '-'}</td>
                 <td style="text-align:center;">${r.gang || '-'}</td>
                 <td style="text-align:center;">${r.prod || '-'}</td>
-                <td style="color:var(--text-secondary);font-size:12px;">${r.memo || ''}</td>
+                <td style="color:var(--text-secondary);font-size:12px;white-space:normal;text-align:left;">${r.memo || ''}</td>
                 <td style="text-align:center;">
                     <div style="display:flex;gap:5px;justify-content:center;">
                         <button onclick="sim.loadHistoryData(${r.id})" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>
