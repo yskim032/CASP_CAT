@@ -73,6 +73,7 @@ class BayplanSimulator {
 
         this.highlightContainerIds = new Set(); // For Find feature (multiple)
         this.searchedIds = new Set(); // All IDs from last search
+        this.selectedContainerId = null; // Specific focus from info panel
         this.activeSimMode = 'A'; // Tracks simulation tab (Mode A or B)
 
         this.initEventListeners();
@@ -224,7 +225,6 @@ class BayplanSimulator {
             { pos: '221370', id: 'HDMU1000011', type: '22G1', size: 20, port: 'KRPUS', isRestow: false },
             { pos: '221372', id: 'HDMU1000012', type: '22G1', size: 20, port: 'KRKAN', isRestow: false },
             { pos: '300202', id: 'HDMU2000001', type: '45G1', size: 40, port: 'KRPUS', isRestow: false },
-            { pos: '300204', id: 'HDMU2000002', type: '45G1', size: 40, port: 'KRPUS', isRestow: false },
             { pos: '300402', id: 'HDMU2000003', type: '45G1', size: 40, port: 'KRKAN', isRestow: false },
             { pos: '301170', id: 'HDMU2000004', type: '45G1', size: 40, port: 'KRPUS', isRestow: false },
             { pos: '301172', id: 'HDMU2000005', type: '45G1', size: 40, port: 'KRPUS', isRestow: false },
@@ -808,6 +808,8 @@ class BayplanSimulator {
             };
         }
 
+        this.currentBayGroupCodes = bayCodes;
+
         if (this.bayGroupsForNavigation && this.bayGroupsForNavigation.length > 0) {
             const strCodes = bayCodes.join(',');
             this.currentBayGroupIdx = this.bayGroupsForNavigation.findIndex(g => g.join(',') === strCodes);
@@ -956,7 +958,9 @@ class BayplanSimulator {
                     slot.style.cursor = 'pointer';
                     slot.addEventListener('click', (e) => {
                         e.stopPropagation();
+                        this.selectedContainerId = found.id;
                         this.showContainerInfo(found, infoPanel);
+                        this.openDetailedBayGroup(this.currentBayGroupCodes);
                     });
                 }
                 grid.appendChild(slot);
@@ -1036,7 +1040,18 @@ class BayplanSimulator {
             if (!c) return;
 
             const section = document.createElement('div');
-            section.style.cssText = 'background:rgba(255,255,255,0.02); border-radius:6px; padding:10px; border-left:4px solid #facc15;';
+            section.style.cssText = 'background:rgba(255,255,255,0.02); border-radius:6px; padding:10px; border-left:4px solid #facc15; cursor:pointer; transition:all 0.2s;';
+            if (this.selectedContainerId === id) {
+                section.style.borderLeftColor = '#ef4444';
+                section.style.background = 'rgba(239,68,68,0.1)';
+            }
+
+            section.addEventListener('click', () => {
+                this.selectedContainerId = id;
+                this.showMultiContainerInfo(ids, panel); // fast re-render of panel
+                this.openDetailedBayGroup(this.currentBayGroupCodes); // re-render grid
+            });
+
             this.showContainerInfo(c, section);
             containerWrapper.appendChild(section);
         });
@@ -1101,8 +1116,18 @@ class BayplanSimulator {
                 element.innerHTML = '';
                 const mappedType = this.getMappedType(found.type);
                 element.title = `${found.id} (${mappedType})\nPort: ${found.port}`;
-                if (this.highlightContainerIds && this.highlightContainerIds.has(found.id)) {
-                    // Bold yellow highlight for Find feature
+
+                if (this.selectedContainerId && found.id === this.selectedContainerId) {
+                    // Focus highlight (Red)
+                    element.style.outline = '5px solid #ef4444';
+                    element.style.outlineOffset = '-2px';
+                    element.style.boxShadow = '0 0 25px #ef4444, inset 0 0 10px rgba(0,0,0,0.4)';
+                    element.style.zIndex = '20';
+                    element.style.position = 'relative';
+                    element.style.transform = 'scale(1.25)';
+                    element.style.borderRadius = '2px';
+                } else if (this.highlightContainerIds && this.highlightContainerIds.has(found.id)) {
+                    // Bulk highlight (Yellow)
                     element.style.outline = '4px solid #facc15';
                     element.style.outlineOffset = '-2px';
                     element.style.boxShadow = '0 0 15px #facc15, inset 0 0 8px rgba(0,0,0,0.5)';
@@ -3038,6 +3063,9 @@ class BayplanSimulator {
         if (this.highlightContainerIds.size === 0) {
             this.highlightContainerIds.add(c.id);
         }
+
+        // Reset focus when opening from find list
+        this.selectedContainerId = null;
 
         // Open the bay detail modal
         this.openDetailedBayGroup(openCodes);
