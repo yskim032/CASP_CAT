@@ -2616,8 +2616,10 @@ class BayplanSimulator {
         const json = JSON.stringify({ disData, lodData });
         const blob = new Blob([json], { type: 'application/json' });
         const ref = window.storage.ref(`bayplanPayload/${docId}.json`);
-        await ref.put(blob);
-        return await ref.getDownloadURL();
+        const snapshot = await ref.put(blob);
+        const url = await ref.getDownloadURL();
+        const size = snapshot.metadata.size; // bytes
+        return { url, size };
     }
 
     // Load EDI payload from Firebase Storage
@@ -2662,8 +2664,8 @@ class BayplanSimulator {
             }
 
             // Upload EDI payload to Firebase Storage (no size limit)
-            const payloadUrl = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
-            await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl });
+            const { url: payloadUrl, size: payloadSize } = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
+            await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl, payloadSize });
 
             document.getElementById('histMemo').value = '';
             this.renderHistoryTable();
@@ -2752,16 +2754,45 @@ class BayplanSimulator {
         }
     }
 
+    _fmtBytes(bytes) {
+        if (!bytes) return '-';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
     async renderHistoryTable() {
         const tbody = document.getElementById('historyTableBody');
         if (!tbody) return;
 
-        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--text-secondary);">Loading from Firebase...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary);">Loading from Firebase...</td></tr>';
 
         const history = await this.getHistory();
 
+        // ── Storage Stats Panel ──────────────────────────────
+        const statsEl = document.getElementById('historyStorageStats');
+        if (statsEl) {
+            const FREE_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
+            const totalBytes = history.reduce((s, r) => s + (r.payloadSize || 0), 0);
+            const pct = ((totalBytes / FREE_BYTES) * 100).toFixed(3);
+            const vesselCount = history.length;
+            statsEl.innerHTML = `
+                <span>☁️ <b style="color:#38bdf8;">Firebase Storage</b></span>
+                <span style="color:var(--text-secondary);">무료 한도:</span>
+                <span style="color:#22c55e;font-weight:700;">5 GB</span>
+                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span style="color:var(--text-secondary);">사용 중:</span>
+                <span style="color:#f59e0b;font-weight:700;">${this._fmtBytes(totalBytes)}</span>
+                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span style="color:var(--text-secondary);">사용률:</span>
+                <span style="color:${parseFloat(pct) > 80 ? '#ef4444' : '#a78bfa'};font-weight:700;">${pct}%</span>
+                <span style="color:rgba(255,255,255,0.2);">|</span>
+                <span style="color:var(--text-secondary);">저장 선박:</span>
+                <span style="color:#38bdf8;font-weight:700;">${vesselCount}척</span>`;
+        }
+
         if (history.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--text-secondary);">No records saved yet in Firebase.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary);">No records saved yet in Firebase.</td></tr>';
             return;
         }
 
@@ -2770,7 +2801,6 @@ class BayplanSimulator {
             const tr = document.createElement('tr');
             if (i % 2 === 1) tr.style.background = 'rgba(255,255,255,0.02)';
 
-            // Format date string from Firebase timestamp if it exists, otherwise use r.date
             let displayDate = r.date || '-';
 
             tr.innerHTML = `
@@ -2785,6 +2815,7 @@ class BayplanSimulator {
                 <td style="text-align:center;width:1%;">${r.gang || '-'}</td>
                 <td style="text-align:center;width:1%;">${r.prod || '-'}</td>
                 <td style="color:var(--text-secondary);font-size:12px;white-space:normal;text-align:left;width:100%;">${r.memo || ''}</td>
+                <td style="text-align:center;white-space:nowrap;width:1%;color:#94a3b8;font-size:11px;">${this._fmtBytes(r.payloadSize)}</td>
                 <td style="text-align:center;width:1%;">
                     <div style="display:flex;gap:5px;justify-content:center;">
                         ${r.payloadUrl ? `<button onclick="sim.loadHistoryData('${r.id}')" title="Load Session" style="background:#3b82f6;border:none;color:white;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px;">Load</button>` : ''}

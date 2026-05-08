@@ -485,6 +485,11 @@
                         Clear All</button>
                 </div>
             </div>
+            <!-- Storage Stats Panel -->
+            <div id="historyStorageStats"
+                style="display:flex;align-items:center;gap:20px;padding:10px 14px;margin-bottom:10px;background:rgba(0,0,0,0.25);border-radius:8px;border:1px solid rgba(255,255,255,0.07);font-size:12px;">
+                <span style="color:var(--text-secondary);">Loading stats...</span>
+            </div>
             <!-- History Table -->
             <div style="overflow:auto;">
                 <table class="list-table" id="historyTable" style="min-width:100%;">
@@ -501,6 +506,7 @@
                             <th style="width:1%;">Gang</th>
                             <th style="width:1%;">Prod.</th>
                             <th style="width:100%; text-align:left;">Memo</th>
+                            <th style="width:1%;white-space:nowrap;">Size</th>
                             <th style="width:1%;"></th>
                         </tr>
                     </thead>
