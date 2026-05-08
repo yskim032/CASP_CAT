@@ -2727,6 +2727,7 @@ class BayplanSimulator {
             memo: document.getElementById('histMemo').value,
             vesselName: this.vessel,
             voyageName: this.voyage,
+            allIds: [...this.disContainers.map(c => c.id.toUpperCase()), ...this.lodContainers.map(c => c.id.toUpperCase())],
             timestamp: firebase.firestore.FieldValue.serverTimestamp()
         };
 
@@ -2971,11 +2972,10 @@ class BayplanSimulator {
     // ─────────────────────────────────────────────────────
     // FIND
     // ─────────────────────────────────────────────────────
-    searchContainers() {
+    async searchContainers() {
         const raw = document.getElementById('findInput')?.value || '';
         if (!raw.trim()) { alert('컨테이너 ID를 입력하세요.'); return; }
 
-        // Parse: split by newline, tab, comma — take first token of each line
         const ids = raw.split(/[\n\r]+/)
             .map(line => line.split(/[\t,]/)[0].trim().toUpperCase())
             .filter(Boolean);
@@ -2990,55 +2990,148 @@ class BayplanSimulator {
         if (!body) return;
         body.innerHTML = '';
 
-        let found = 0, notFound = 0;
+        // Header for Current Load
+        body.innerHTML += `<tr style="background:rgba(255,255,255,0.05);"><td colspan="14" style="color:var(--accent-color);font-weight:800;padding:8px 12px;">🚢 CURRENTLY LOADED: ${this.vessel || '---'}</td></tr>`;
+
+        let foundInCurrent = 0;
+        const currentFoundIds = new Set();
+
         ids.forEach((id, i) => {
             const disC = disMap.get(id);
             const lodC = lodMap.get(id);
             const c = disC || lodC;
 
-            const tr = document.createElement('tr');
-            if (!c) {
-                notFound++;
-                tr.style.background = 'rgba(239,68,68,0.07)';
-                tr.innerHTML = `
-                    <td style="text-align:center;color:var(--text-secondary);">${i + 1}</td>
-                    <td style="font-family:monospace;font-weight:600;color:#ef4444;">${id}</td>
-                    <td colspan="9" style="color:#ef4444;font-size:12px;">NOT FOUND</td>`;
-            } else {
-                found++;
-                let statusLabel, statusColor;
-                if (disC && lodC) {
-                    statusLabel = 'DIS + LOD'; statusColor = '#ec4899';
-                } else if (disC) {
-                    statusLabel = 'DIS'; statusColor = '#f59e0b';
-                } else {
-                    statusLabel = 'LOD'; statusColor = '#22c55e';
-                }
-                const mappedType = this.getMappedType(c.type);
-                const fe = c.fullEmpty === 'F' ? 'FULL' : c.fullEmpty === 'E' ? 'EMPTY' : '-';
-                const feColor = c.fullEmpty === 'F' ? '#22c55e' : '#94a3b8';
-                const bayCode = c.pos ? c.pos.substring(0, 2) : null;
-
-                tr.innerHTML = `
-                    <td style="text-align:center;color:var(--text-secondary);">${i + 1}</td>
-                    <td style="font-family:monospace;font-weight:700;">${c.id}</td>
-                    <td style="text-align:center;font-weight:700;color:${statusColor};">${statusLabel}</td>
-                    <td style="text-align:center;">${bayCode
-                        ? `<span style="font-family:monospace;font-weight:700;color:#38bdf8;cursor:pointer;padding:3px 8px;border:1px solid rgba(56,189,248,0.4);border-radius:4px;display:inline-block;"
-                            onclick="window.sim.openBayWithHighlight('${c.id}')" title="Click to open bay detail">${c.pos}</span>`
-                        : '-'}</td>
-                    <td style="text-align:center;">${c.size}'</td>
-                    <td style="text-align:center;">${mappedType || '-'}</td>
-                    <td>${c.pol || c.port || '-'}</td>
-                    <td>${c.pod || '-'}</td>
-                    <td style="color:${feColor};font-weight:600;">${fe}</td>
-                    <td style="text-align:right;">${c.weight ? c.weight + ' T' : '-'}</td>
-                    <td style="text-align:center;color:var(--accent-color);font-weight:600;">${c.opr || '-'}</td>`;
+            if (c) {
+                foundInCurrent++;
+                currentFoundIds.add(id);
+                this._renderFindRow(body, i + 1, c, disC, lodC, `${this.vessel} / ${this.voyage}`, '-', '-');
             }
-            body.appendChild(tr);
         });
 
-        if (countEl) countEl.textContent = `${ids.length} IDs searched — Found: ${found}, Not found: ${notFound}`;
+        if (foundInCurrent === 0) {
+            body.innerHTML += `<tr><td colspan="14" style="text-align:center;padding:15px;color:var(--text-secondary);font-size:12px;">No matching containers found in current load.</td></tr>`;
+        }
+
+        // Header for History
+        body.innerHTML += `<tr style="background:rgba(56,189,248,0.1);"><td colspan="14" style="color:#38bdf8;font-weight:800;padding:8px 12px;">📂 SEARCHING HISTORY RECORDS...</td></tr>`;
+
+        if (countEl) countEl.textContent = `Searching... (Current: ${foundInCurrent})`;
+
+        try {
+            const historyMatches = await this.searchHistoryContainers(ids);
+
+            // Only show those NOT in current load
+            const historyOnly = historyMatches.filter(h => !currentFoundIds.has(h.id.toUpperCase()));
+
+            if (historyOnly.length === 0) {
+                body.innerHTML += `<tr><td colspan="14" style="text-align:center;padding:15px;color:var(--text-secondary);font-size:12px;">No additional matches found in history.</td></tr>`;
+            } else {
+                historyOnly.forEach((h, i) => {
+                    this._renderFindRow(body, foundInCurrent + i + 1, h, h.status === 'DIS', h.status === 'LOD', h.histVessel, h.histDate, h.histMemo, true);
+                });
+            }
+            if (countEl) countEl.textContent = `${ids.length} IDs searched — Current Load: ${foundInCurrent}, History: ${historyOnly.length}`;
+
+            // Final NOT FOUND section
+            const allFoundIds = new Set([...currentFoundIds, ...historyMatches.map(h => h.id.toUpperCase())]);
+            const notFoundIds = ids.filter(id => !allFoundIds.has(id));
+            if (notFoundIds.length > 0) {
+                body.innerHTML += `<tr style="background:rgba(239,68,68,0.05);"><td colspan="14" style="color:#ef4444;font-weight:800;padding:8px 12px;">❌ NOT FOUND (${notFoundIds.length})</td></tr>`;
+                notFoundIds.forEach((id, i) => {
+                    body.innerHTML += `
+                        <tr style="background:rgba(239,68,68,0.02);">
+                            <td style="text-align:center;color:var(--text-secondary);">${i + 1}</td>
+                            <td style="font-family:monospace;font-weight:600;color:#ef4444;">${id}</td>
+                            <td colspan="12" style="color:#ef4444;font-size:12px;">NOT FOUND IN ANY RECORDS</td>
+                        </tr>`;
+                });
+            }
+
+        } catch (err) {
+            console.error("History search error:", err);
+            body.innerHTML += `<tr><td colspan="14" style="color:#ef4444;text-align:center;padding:10px;">History Search Failed: ${err.message}</td></tr>`;
+        }
+    }
+
+    _renderFindRow(container, idx, c, isDis, isLod, vesselStr, dateStr, memoStr, isHistory = false) {
+        let statusLabel, statusColor;
+        if (isDis && isLod) { statusLabel = 'DIS+LOD'; statusColor = '#ec4899'; }
+        else if (isDis) { statusLabel = 'DIS'; statusColor = '#f59e0b'; }
+        else { statusLabel = 'LOD'; statusColor = '#22c55e'; }
+
+        const tr = document.createElement('tr');
+        if (isHistory) tr.style.opacity = '0.9';
+
+        const mappedType = this.getMappedType(c.type);
+        const fe = c.fullEmpty === 'F' ? 'FULL' : c.fullEmpty === 'E' ? 'EMPTY' : '-';
+        const feColor = c.fullEmpty === 'F' ? '#22c55e' : '#94a3b8';
+        const bayCode = c.pos ? c.pos.substring(0, 2) : null;
+
+        tr.innerHTML = `
+            <td style="text-align:center;color:var(--text-secondary);">${idx}</td>
+            <td style="font-family:monospace;font-weight:700;">${c.id}</td>
+            <td style="text-align:center;font-weight:700;color:${statusColor};font-size:11px;">${statusLabel}</td>
+            <td style="font-size:11px;white-space:nowrap;">${vesselStr}</td>
+            <td style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">${dateStr}</td>
+            <td style="text-align:center;">${bayCode && !isHistory
+                ? `<span style="font-family:monospace;font-weight:700;color:#38bdf8;cursor:pointer;padding:3px 8px;border:1px solid rgba(56,189,248,0.4);border-radius:4px;display:inline-block;"
+                    onclick="window.sim.openBayWithHighlight('${c.id}')">${c.pos}</span>`
+                : `<span style="font-family:monospace;color:var(--text-secondary);">${c.pos || '-'}</span>`}</td>
+            <td style="font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;" title="${memoStr}">${memoStr}</td>
+            <td style="text-align:center;">${c.size}'</td>
+            <td style="text-align:center;">${mappedType || '-'}</td>
+            <td>${c.pol || c.port || '-'}</td>
+            <td>${c.pod || '-'}</td>
+            <td style="color:${feColor};font-weight:600;">${fe}</td>
+            <td style="text-align:right;">${c.weight ? c.weight + ' T' : '-'}</td>
+            <td style="text-align:center;color:var(--accent-color);font-weight:600;">${c.opr || '-'}</td>`;
+        container.appendChild(tr);
+    }
+
+    async searchHistoryContainers(ids) {
+        const results = [];
+        const historySnap = await window.db.collection('bayplanHistory').get();
+        if (historySnap.empty) return [];
+
+        const searchIds = ids.map(id => id.toUpperCase());
+        const payloadCache = new Map();
+
+        for (const doc of historySnap.docs) {
+            const data = doc.data();
+            if (!data.allIds) continue;
+
+            const matches = searchIds.filter(id => data.allIds.includes(id));
+            if (matches.length > 0) {
+                // To get container details, we must load the payload
+                let payload;
+                const docId = doc.id;
+                if (payloadCache.has(docId)) {
+                    payload = payloadCache.get(docId);
+                } else {
+                    try {
+                        payload = await this._loadPayloadFromStorage(data.payloadPath || `bayplanPayload/${docId}.json`);
+                        payloadCache.set(docId, payload);
+                    } catch (e) {
+                        console.warn("Could not load payload for history search", docId, e);
+                        continue;
+                    }
+                }
+
+                const allInHist = [...payload.disData.map(x => ({ ...x, status: 'DIS' })), ...payload.lodData.map(x => ({ ...x, status: 'LOD' }))];
+                matches.forEach(mId => {
+                    const matchC = allInHist.find(x => x.id.toUpperCase() === mId);
+                    if (matchC) {
+                        results.push({
+                            ...matchC,
+                            histVessel: data.vessel,
+                            histDate: data.date,
+                            histMemo: data.memo
+                        });
+                    }
+                });
+            }
+        }
+        return results;
     }
 
     openBayWithHighlight(containerId) {
