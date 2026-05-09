@@ -3167,10 +3167,6 @@ class BayplanSimulator {
                 sum_lF20 += g.lodF20; sum_lF40 += g.lodF40; sum_lE20 += g.lodE20; sum_lE40 += g.lodE40;
 
                 const formatCell = (val, val20, val40) => {
-                    if (val === 0 && g.isLegacy) return '-';
-                    if (g.isLegacy || (val20 === 0 && val40 === 0 && val > 0)) {
-                        return val; // do not show (0 / 0) if old data
-                    }
                     return `${val} <span style="font-size:10px; color:var(--text-secondary); margin-left:4px;">(${val20} / ${val40})</span>`;
                 };
 
@@ -3194,7 +3190,6 @@ class BayplanSimulator {
 
             // Add Total Row
             const formatTotalCell = (val, val20, val40) => {
-                if (val20 === 0 && val40 === 0 && val > 0) return val;
                 return `${val} <span style="font-size:10px; color:rgba(255,255,255,0.5); margin-left:4px;">(${val20} / ${val40})</span>`;
             };
 
