@@ -194,6 +194,27 @@ class BayplanSimulator {
             }
         });
 
+        const histDateInput = document.getElementById('histDate');
+        if (histDateInput) {
+            const formatStr = (val) => {
+                const numOnly = val.replace(/[^0-9]/g, '');
+                if (numOnly.length === 8) {
+                    return numOnly.substring(0, 4) + '-' + numOnly.substring(4, 6) + '-' + numOnly.substring(6, 8);
+                }
+                return val;
+            };
+            histDateInput.addEventListener('input', function (e) {
+                const raw = this.value.replace(/[^0-9-]/g, '');
+                const numOnly = raw.replace(/[^0-9]/g, '');
+                if (numOnly.length === 8 && !raw.includes('-')) {
+                    this.value = formatStr(raw);
+                }
+            });
+            histDateInput.addEventListener('blur', function (e) {
+                this.value = formatStr(this.value);
+            });
+        }
+
         // Keyboard navigation for Modal
         document.addEventListener('keydown', (e) => {
             const modal = document.getElementById('bayModal');
@@ -492,8 +513,8 @@ class BayplanSimulator {
     updateUI() {
         this.processRestows();
         this.updateOperatorList();
-        this.renderGeneralStowage();
         this.renderRecap();
+        this.renderGeneralStowage();
         if (this.currentListTab) this.renderContainerList(this.currentListTab);
     }
 
@@ -559,6 +580,9 @@ class BayplanSimulator {
         //   - b1 (FWD 20') -> own thumb
         //   - b2 (40') + b3 (AFT 20') -> ONE combined thumb (they share the same slot visually)
         // In detailed view: b2 and b3 are shown as separate grids side by side
+        let currentWrapper = null;
+        let currentWrapperType = null;
+
         for (let k = 1; k <= 60; k++) {
             const b1 = 4 * k - 3; // FWD 20' odd
             const b2 = 4 * k - 2; // 40' even
@@ -568,8 +592,33 @@ class BayplanSimulator {
             const hasAny = existingNums.has(b1) || existingNums.has(b2) || existingNums.has(b3);
             if (!hasAny) continue;
 
+            const gk = String(b2).padStart(2, '0');
+            const isLong = this._longGangMap && this._longGangMap.has(gk);
+            const isShort = this._shortGangMap && this._shortGangMap.has(gk);
+            const type = isLong ? 'long' : (isShort ? 'short' : null);
+
+            if (type !== currentWrapperType) {
+                if (currentWrapper) {
+                    container.appendChild(currentWrapper);
+                }
+                if (type) {
+                    currentWrapper = document.createElement('div');
+                    const color = type === 'long' ? '#ef4444' : '#22c55e';
+                    const letter = type === 'long' ? 'L' : 'S';
+                    currentWrapper.style.cssText = `display:flex; border: 2px solid ${color}; position:relative; padding:4px; padding-left:0; border-radius:6px;`;
+                    currentWrapper.innerHTML = `<div style="position:absolute; top:-12px; right:-12px; width:24px; height:24px; border-radius:50%; background:${color}; color:white; font-size:13px; font-weight:bold; display:flex; align-items:center; justify-content:center; box-shadow:0 2px 4px rgba(0,0,0,0.5); z-index:10;">${letter}</div>`;
+                } else {
+                    currentWrapper = null;
+                }
+                currentWrapperType = type;
+            }
+
             const hatchDiv = document.createElement('div');
             hatchDiv.className = 'hatch-column';
+            if (currentWrapper && currentWrapper.children.length === 1) { // includes only badge initially
+                hatchDiv.style.borderLeft = 'none';
+                hatchDiv.style.paddingLeft = '4px';
+            }
 
             // ── FWD 20' bay (b1) ── own thumbnail
             if (existingNums.has(b1)) {
@@ -613,7 +662,17 @@ class BayplanSimulator {
                 hatchDiv.appendChild(bayDiv);
             }
 
-            if (hatchDiv.children.length > 0) container.appendChild(hatchDiv);
+            if (hatchDiv.children.length > 0) {
+                if (currentWrapper) {
+                    currentWrapper.appendChild(hatchDiv);
+                } else {
+                    container.appendChild(hatchDiv);
+                }
+            }
+        }
+
+        if (currentWrapper) {
+            container.appendChild(currentWrapper);
         }
     }
 
@@ -1674,9 +1733,11 @@ class BayplanSimulator {
         const groupMap = {};
         activeData.forEach(b => {
             const gk = getGroupKey(parseInt(b.bay));
-            if (!groupMap[gk]) groupMap[gk] = { group: gk, d: 0, l: 0, bays: [] };
+            if (!groupMap[gk]) groupMap[gk] = { group: gk, d: 0, l: 0, totalTwt: 0, bays: [] };
             groupMap[gk].d += b.d;
             groupMap[gk].l += b.l;
+            // totalTwt: twin-adjusted total moves (AFT bays have twin pair savings applied)
+            groupMap[gk].totalTwt += (b.twt !== undefined ? b.twt : (b.d + b.l));
             if (!groupMap[gk].bays.includes(b.bay)) groupMap[gk].bays.push(b.bay);
         });
         const bayGroups = Object.values(groupMap).sort((a, b) => parseInt(a.group) - parseInt(b.group));
@@ -1739,6 +1800,60 @@ class BayplanSimulator {
         ];
 
         // ── 5. Summary table ────────────────────────────────────────────
+        const toHHMM = h => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
+
+        // Compute per-gang figures for productivity display
+        const gangStats = gangSections.map((sec, gi) => {
+            // Total Figure: pure container count (no twin deduction)
+            const gcTotalFigure = sec.reduce((s, g) => s + g.d + g.l, 0);
+            // Total Moves: twin-adjusted (sum of bay-level twt inside this gang's sections)
+            const gcTotalMoves = sec.reduce((s, g) => s + (g.totalTwt !== undefined ? g.totalTwt : g.d + g.l), 0);
+            const hrs = gangEndTimes[gi];
+            const prodMove = hrs > 0 ? gcTotalMoves / hrs : 0;
+            const prodFigure = hrs > 0 ? gcTotalFigure / hrs : 0;
+            return { gcTotalMoves, gcTotalFigure, hrs, prodMove, prodFigure };
+        });
+
+        let maxHrs = -1;
+        let minHrs = Infinity;
+        gangStats.forEach(st => {
+            if (st.hrs > maxHrs) maxHrs = st.hrs;
+            if (st.hrs < minHrs) minHrs = st.hrs;
+        });
+
+        this._longGangMap = new Map();
+        this._shortGangMap = new Map();
+        if (gangStats.length > 1 && maxHrs > minHrs) {
+            gangStats.forEach((st, gi) => {
+                const pal = GC_PALETTE[gi % GC_PALETTE.length];
+                if (st.hrs === maxHrs) {
+                    gangSections[gi].forEach(sg => this._longGangMap.set(sg.group, pal.label));
+                } else if (st.hrs === minHrs) {
+                    gangSections[gi].forEach(sg => this._shortGangMap.set(sg.group, pal.label));
+                }
+            });
+        }
+
+        // Average productivity across all gangs (weighted by hours)
+        const allHrs = gangStats.reduce((s, g) => s + g.hrs, 0);
+        const allMoves = gangStats.reduce((s, g) => s + g.gcTotalMoves, 0);
+        const allFigure = gangStats.reduce((s, g) => s + g.gcTotalFigure, 0);
+        const avgProdMove = allHrs > 0 ? allMoves / allHrs : 0;
+        const avgProdFigure = allHrs > 0 ? allFigure / allHrs : 0;
+
+        // Update title in index.html with average productivity
+        const gcWorkTitle = document.getElementById('gcWorkDistTitle');
+        if (gcWorkTitle) {
+            gcWorkTitle.innerHTML = `G/C Work Distribution
+                <span style="margin-left:14px; font-size:11px; font-weight:400; color:var(--text-secondary);">
+                    Avg Productivity:
+                    <span style="color:#38bdf8; font-weight:700; margin-left:4px;">Move ${avgProdMove.toFixed(1)}</span>
+                    <span style="color:rgba(255,255,255,0.3); margin:0 4px;">/</span>
+                    <span style="color:#22c55e; font-weight:700;">Figure ${avgProdFigure.toFixed(1)}</span>
+                    <span style="color:rgba(255,255,255,0.35); font-size:10px; margin-left:2px;">(mvs/hr)</span>
+                </span>`;
+        }
+
         const summaryWrap = document.createElement('div');
         summaryWrap.style.cssText = `margin-bottom:12px; border-radius:8px; overflow:hidden;
             border:1px solid rgba(255,255,255,0.08); background:#0a1420;`;
@@ -1749,25 +1864,38 @@ class BayplanSimulator {
             <th style="padding:8px 12px;text-align:left;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">GC</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Bay Groups</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Total Moves</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Total Figure</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Working Time</th>
             <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Work Hrs</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Prod (Move)</th>
+            <th style="padding:8px 12px;text-align:center;color:#64748b;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Prod (Figure)</th>
         </tr></thead>`;
-
-        const toHHMM = h => `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
 
         const tbody = document.createElement('tbody');
         gangSections.forEach((sec, gi) => {
-            const tasks = scheduled.filter(t => t.gangId === gi);
-            const totalMoves = tasks.reduce((s, t) => s + t.moves, 0);
+            const { gcTotalMoves, gcTotalFigure, hrs, prodMove, prodFigure } = gangStats[gi];
             const pal = GC_PALETTE[gi % GC_PALETTE.length];
+
+            let rowStyle = 'border-top:1px solid rgba(255,255,255,0.05);';
+            if (gangStats.length > 1 && maxHrs > minHrs) {
+                if (hrs === maxHrs) {
+                    rowStyle = 'border-top:1px solid rgba(239, 68, 68, 0.4); border-bottom:1px solid rgba(239, 68, 68, 0.4); background:rgba(239, 68, 68, 0.1);';
+                } else if (hrs === minHrs) {
+                    rowStyle = 'border-top:1px solid rgba(34, 197, 94, 0.4); border-bottom:1px solid rgba(34, 197, 94, 0.4); background:rgba(34, 197, 94, 0.1);';
+                }
+            }
+
             const tr = document.createElement('tr');
-            tr.style.cssText = `border-top:1px solid rgba(255,255,255,0.05);`;
+            tr.style.cssText = rowStyle;
             tr.innerHTML = `
                 <td style="padding:7px 12px;color:${pal.label};font-weight:800;font-size:13px;">GC ${gi + 1}</td>
                 <td style="padding:7px 12px;text-align:center;color:#e2e8f0;">${sec.length}</td>
-                <td style="padding:7px 12px;text-align:center;color:#e2e8f0;font-weight:700;">${totalMoves}</td>
-                <td style="padding:7px 12px;text-align:center;color:#94a3b8;">${toHHMM(gangEndTimes[gi])}</td>
-                <td style="padding:7px 12px;text-align:center;color:#fbbf24;font-weight:700;">${gangEndTimes[gi].toFixed(1)}h</td>`;
+                <td style="padding:7px 12px;text-align:center;color:#e2e8f0;font-weight:700;">${gcTotalMoves}</td>
+                <td style="padding:7px 12px;text-align:center;color:#a78bfa;font-weight:700;">${gcTotalFigure}</td>
+                <td style="padding:7px 12px;text-align:center;color:#94a3b8;">${toHHMM(hrs)}</td>
+                <td style="padding:7px 12px;text-align:center;color:#fbbf24;font-weight:700;">${hrs.toFixed(1)}h</td>
+                <td style="padding:7px 12px;text-align:center;color:#38bdf8;font-weight:700;">${prodMove.toFixed(1)}</td>
+                <td style="padding:7px 12px;text-align:center;color:#22c55e;font-weight:700;">${prodFigure.toFixed(1)}</td>`;
             tbody.appendChild(tr);
         });
         tbl.appendChild(tbody);
@@ -2640,7 +2768,7 @@ class BayplanSimulator {
     populateHistoryForm() {
         const now = new Date();
         const pad = n => String(n).padStart(2, '0');
-        const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`; // Default to YYYY-MM-DD
         document.getElementById('histDate').value = dateStr;
 
         const vessel = this.vessel || '---';
@@ -2671,8 +2799,56 @@ class BayplanSimulator {
 
     async getHistory() {
         try {
-            const snapshot = await window.db.collection('bayplanHistory').orderBy('timestamp', 'desc').get();
-            return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const snapshot = await window.db.collection('bayplanHistory').get();
+            let docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // Migration for legacy records missing F/E stats
+            let migrationPromises = [];
+            for (let doc of docs) {
+                if (doc.disF === undefined && (doc.payloadPath || doc.payloadUrl)) {
+                    migrationPromises.push((async () => {
+                        try {
+                            const payload = await this._loadPayloadFromStorage(doc.payloadPath || `bayplanPayload/${doc.id}.json`);
+
+                            let disF = 0, disE = 0, lodF = 0, lodE = 0;
+                            let disTeu = 0, lodTeu = 0;
+                            const targetPort = doc.port;
+
+                            (payload.disData || []).forEach(c => {
+                                if ((c.pod || c.port) === targetPort && !c.isRestow) {
+                                    const teu = parseInt(c.size) === 20 ? 1 : 2;
+                                    if (c.fullEmpty === 'E') { disE++; disTeu += teu; } else { disF++; disTeu += teu; }
+                                }
+                            });
+                            (payload.lodData || []).forEach(c => {
+                                if ((c.pol || c.port) === targetPort && !c.isRestow) {
+                                    const teu = parseInt(c.size) === 20 ? 1 : 2;
+                                    if (c.fullEmpty === 'E') { lodE++; lodTeu += teu; } else { lodF++; lodTeu += teu; }
+                                }
+                            });
+
+                            const updates = { disF, disE, lodF, lodE, disTeu, lodTeu };
+                            await window.db.collection('bayplanHistory').doc(doc.id).update(updates);
+                            Object.assign(doc, updates);
+                        } catch (e) {
+                            console.warn("Migration failed for", doc.id, e);
+                        }
+                    })());
+                }
+            }
+            if (migrationPromises.length > 0) {
+                await Promise.all(migrationPromises);
+            }
+
+            // Sort by Date ascending (chronological ETA)
+            docs.sort((a, b) => {
+                const da = a.date || '';
+                const db = b.date || '';
+                if (da < db) return -1;
+                if (da > db) return 1;
+                return 0;
+            });
+            return docs;
         } catch (e) {
             console.error('Error getting history:', e);
             return [];
@@ -2713,7 +2889,7 @@ class BayplanSimulator {
         const vesselVal = document.getElementById('histVessel').value;
         if (!vesselVal) { alert('Please load EDI data first.'); return; }
 
-        const meta = {
+        let meta = {
             date: document.getElementById('histDate').value,
             vessel: vesselVal,
             port: document.getElementById('histPort').value,
@@ -2724,33 +2900,69 @@ class BayplanSimulator {
             berth: document.getElementById('histBerth').value,
             gang: document.getElementById('histGang').value,
             prod: document.getElementById('histProd').value,
-            memo: document.getElementById('histMemo').value,
-            vesselName: this.vessel,
-            voyageName: this.voyage,
-            allIds: [...this.disContainers.map(c => c.id.toUpperCase()), ...this.lodContainers.map(c => c.id.toUpperCase())],
-            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            memo: document.getElementById('histMemo').value
         };
 
-        // Calculate Firestore document size
-        const metaSize = new Blob([JSON.stringify(meta)]).size;
-        meta.metaSize = metaSize;
-
         try {
-            let docId;
             if (this.editingHistId) {
-                await window.db.collection('bayplanHistory').doc(this.editingHistId).set(meta);
-                docId = this.editingHistId;
+                // Edit existing metadata only, preserve payload & IDs
+                meta.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
+                await window.db.collection('bayplanHistory').doc(this.editingHistId).update(meta);
                 this.editingHistId = null;
                 alert('Record updated in Firebase!');
             } else {
+                // New record: calculate F/E and TEUs
+                let disF = 0, disE = 0, lodF = 0, lodE = 0;
+                let disF20 = 0, disF40 = 0, disE20 = 0, disE40 = 0;
+                let lodF20 = 0, lodF40 = 0, lodE20 = 0, lodE40 = 0;
+                let disTeu = 0, lodTeu = 0;
+                this.disContainers.forEach(c => {
+                    if ((c.pod || c.port) === this.targetPort && !c.isRestow) {
+                        const is20 = c.size === 20;
+                        const teu = is20 ? 1 : 2;
+                        if (c.fullEmpty === 'E') {
+                            disE++; disTeu += teu;
+                            if (is20) disE20++; else disE40++;
+                        } else {
+                            disF++; disTeu += teu;
+                            if (is20) disF20++; else disF40++;
+                        }
+                    }
+                });
+                this.lodContainers.forEach(c => {
+                    if ((c.pol || c.port) === this.targetPort && !c.isRestow) {
+                        const is20 = c.size === 20;
+                        const teu = is20 ? 1 : 2;
+                        if (c.fullEmpty === 'E') {
+                            lodE++; lodTeu += teu;
+                            if (is20) lodE20++; else lodE40++;
+                        } else {
+                            lodF++; lodTeu += teu;
+                            if (is20) lodF20++; else lodF40++;
+                        }
+                    }
+                });
+
+                meta.vesselName = this.vessel;
+                meta.voyageName = this.voyage;
+                meta.allIds = [...this.disContainers.map(c => c.id.toUpperCase()), ...this.lodContainers.map(c => c.id.toUpperCase())];
+                meta.timestamp = firebase.firestore.FieldValue.serverTimestamp();
+                meta.disF = disF; meta.disE = disE; meta.lodF = lodF; meta.lodE = lodE;
+                meta.disF20 = disF20; meta.disF40 = disF40; meta.disE20 = disE20; meta.disE40 = disE40;
+                meta.lodF20 = lodF20; meta.lodF40 = lodF40; meta.lodE20 = lodE20; meta.lodE40 = lodE40;
+                meta.disTeu = disTeu; meta.lodTeu = lodTeu;
+
+                const metaSize = new Blob([JSON.stringify(meta)]).size;
+                meta.metaSize = metaSize;
+
                 const ref = await window.db.collection('bayplanHistory').add(meta);
-                docId = ref.id;
+                const docId = ref.id;
+
+                // Upload EDI payload
+                const { url: payloadUrl, size: payloadSize, path: payloadPath } = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
+                await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl, payloadSize, payloadPath });
                 alert('Record saved to Firebase!');
             }
-
-            // Upload EDI payload to Firebase Storage (no size limit)
-            const { url: payloadUrl, size: payloadSize, path: payloadPath } = await this._savePayloadToStorage(docId, this.disContainers, this.lodContainers);
-            await window.db.collection('bayplanHistory').doc(docId).update({ payloadUrl, payloadSize, payloadPath });
 
             document.getElementById('histMemo').value = '';
             this.renderHistoryTable();
@@ -2887,18 +3099,141 @@ class BayplanSimulator {
 
         if (history.length === 0) {
             tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:20px;color:var(--text-secondary);">No records saved yet in Firebase.</td></tr>';
+            // Clear summary charts if no history
+            if (document.getElementById('dailyVolumeBody')) document.getElementById('dailyVolumeBody').innerHTML = '';
+            if (window.dailyChart) { window.dailyChart.destroy(); window.dailyChart = null; }
             return;
         }
+
+        // --- Render Daily Volume Summary Panel ---
+        const dateGroups = {};
+        history.forEach(r => {
+            const rawDt = r.date ? r.date.split(' ')[0] : 'Unknown';
+            const dt = rawDt.length === 8 && !rawDt.includes('-')
+                ? rawDt.substring(0, 4) + '-' + rawDt.substring(4, 6) + '-' + rawDt.substring(6, 8)
+                : rawDt;
+
+            if (!dateGroups[dt]) {
+                dateGroups[dt] = {
+                    disF: 0, disE: 0, disTeu: 0, lodF: 0, lodE: 0, lodTeu: 0,
+                    disF20: 0, disF40: 0, disE20: 0, disE40: 0,
+                    lodF20: 0, lodF40: 0, lodE20: 0, lodE40: 0,
+                    isLegacy: true
+                };
+            }
+            if (r.disTeu || r.lodTeu || r.disF || r.lodF || r.disE || r.lodE) {
+                dateGroups[dt].isLegacy = false;
+            }
+
+            let dTeu = r.disTeu || 0;
+            let lTeu = r.lodTeu || 0;
+            if (!r.disTeu && !r.lodTeu && (r.dis || r.lod)) {
+                dTeu = Math.round(parseInt(r.dis || 0) * 1.5);
+                lTeu = Math.round(parseInt(r.lod || 0) * 1.5);
+            }
+
+            dateGroups[dt].disF += (r.disF || 0);
+            dateGroups[dt].disE += (r.disE || 0);
+            dateGroups[dt].disTeu += dTeu;
+            dateGroups[dt].lodF += (r.lodF || 0);
+            dateGroups[dt].lodE += (r.lodE || 0);
+            dateGroups[dt].lodTeu += lTeu;
+
+            dateGroups[dt].disF20 += (r.disF20 || 0);
+            dateGroups[dt].disF40 += (r.disF40 || 0);
+            dateGroups[dt].disE20 += (r.disE20 || 0);
+            dateGroups[dt].disE40 += (r.disE40 || 0);
+            dateGroups[dt].lodF20 += (r.lodF20 || 0);
+            dateGroups[dt].lodF40 += (r.lodF40 || 0);
+            dateGroups[dt].lodE20 += (r.lodE20 || 0);
+            dateGroups[dt].lodE40 += (r.lodE40 || 0);
+        });
+
+        const sortedDates = Object.keys(dateGroups).sort();
+        const summaryBody = document.getElementById('dailyVolumeBody');
+        if (summaryBody) {
+            summaryBody.innerHTML = '';
+            let sum_dF = 0, sum_dE = 0, sum_dT = 0;
+            let sum_lF = 0, sum_lE = 0, sum_lT = 0;
+            let sum_dF20 = 0, sum_dF40 = 0, sum_dE20 = 0, sum_dE40 = 0;
+            let sum_lF20 = 0, sum_lF40 = 0, sum_lE20 = 0, sum_lE40 = 0;
+
+            sortedDates.forEach(dt => {
+                const g = dateGroups[dt];
+
+                sum_dF += g.disF; sum_dE += g.disE; sum_dT += g.disTeu;
+                sum_lF += g.lodF; sum_lE += g.lodE; sum_lT += g.lodTeu;
+                sum_dF20 += g.disF20; sum_dF40 += g.disF40; sum_dE20 += g.disE20; sum_dE40 += g.disE40;
+                sum_lF20 += g.lodF20; sum_lF40 += g.lodF40; sum_lE20 += g.lodE20; sum_lE40 += g.lodE40;
+
+                const formatCell = (val, val20, val40) => {
+                    if (val === 0 && g.isLegacy) return '-';
+                    if (g.isLegacy || (val20 === 0 && val40 === 0 && val > 0)) {
+                        return val; // do not show (0 / 0) if old data
+                    }
+                    return `${val} <span style="font-size:10px; color:var(--text-secondary); margin-left:4px;">(${val20} / ${val40})</span>`;
+                };
+
+                const dFTxt = formatCell(g.disF, g.disF20, g.disF40);
+                const dETxt = formatCell(g.disE, g.disE20, g.disE40);
+                const lFTxt = formatCell(g.lodF, g.lodF20, g.lodF40);
+                const lETxt = formatCell(g.lodE, g.lodE20, g.lodE40);
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="text-align:center;font-weight:bold;">${dt}</td>
+                    <td style="text-align:center;color:${g.isLegacy ? 'var(--text-secondary)' : 'inherit'};">${dFTxt}</td>
+                    <td style="text-align:center;color:${g.isLegacy ? 'var(--text-secondary)' : 'inherit'};">${dETxt}</td>
+                    <td style="text-align:center;font-weight:bold;color:#f59e0b;">${g.disTeu}</td>
+                    <td style="text-align:center;color:${g.isLegacy ? 'var(--text-secondary)' : 'inherit'};">${lFTxt}</td>
+                    <td style="text-align:center;color:${g.isLegacy ? 'var(--text-secondary)' : 'inherit'};">${lETxt}</td>
+                    <td style="text-align:center;font-weight:bold;color:#22c55e;">${g.lodTeu}</td>
+                `;
+                summaryBody.appendChild(tr);
+            });
+
+            // Add Total Row
+            const formatTotalCell = (val, val20, val40) => {
+                if (val20 === 0 && val40 === 0 && val > 0) return val;
+                return `${val} <span style="font-size:10px; color:rgba(255,255,255,0.5); margin-left:4px;">(${val20} / ${val40})</span>`;
+            };
+
+            const trTotal = document.createElement('tr');
+            trTotal.style.backgroundColor = 'rgba(255,255,255,0.06)';
+            trTotal.style.borderTop = '2px solid rgba(255,255,255,0.2)';
+            trTotal.innerHTML = `
+                <td style="text-align:center;font-weight:bold;color:#38bdf8;">TOTAL</td>
+                <td style="text-align:center;font-weight:bold;">${formatTotalCell(sum_dF, sum_dF20, sum_dF40)}</td>
+                <td style="text-align:center;font-weight:bold;">${formatTotalCell(sum_dE, sum_dE20, sum_dE40)}</td>
+                <td style="text-align:center;font-weight:bold;color:#f59e0b;">${sum_dT}</td>
+                <td style="text-align:center;font-weight:bold;">${formatTotalCell(sum_lF, sum_lF20, sum_lF40)}</td>
+                <td style="text-align:center;font-weight:bold;">${formatTotalCell(sum_lE, sum_lE20, sum_lE40)}</td>
+                <td style="text-align:center;font-weight:bold;color:#22c55e;">${sum_lT}</td>
+            `;
+            summaryBody.appendChild(trTotal);
+        }
+
+        this.renderDailyChart(sortedDates, dateGroups);
 
         tbody.innerHTML = '';
         history.forEach((r, i) => {
             const tr = document.createElement('tr');
             if (i % 2 === 1) tr.style.background = 'rgba(255,255,255,0.02)';
 
-            let displayDate = r.date || '-';
+            let createdDate = '-';
+            if (r.timestamp && r.timestamp.seconds) {
+                const cd = new Date(r.timestamp.seconds * 1000);
+                const pad = n => String(n).padStart(2, '0');
+                createdDate = `${cd.getFullYear()}-${pad(cd.getMonth() + 1)}-${pad(cd.getDate())} ${pad(cd.getHours())}:${pad(cd.getMinutes())}`;
+            } else if (r.date) {
+                createdDate = r.date;
+            }
+
+            let etaDate = r.date || '-';
 
             tr.innerHTML = `
-                <td style="white-space:nowrap;font-size:11px;color:var(--text-secondary);width:1%;">${displayDate}</td>
+                <td style="white-space:nowrap;font-size:11px;color:var(--text-secondary);width:1%;">${createdDate}</td>
+                <td style="white-space:nowrap;font-size:11px;color:#38bdf8;font-weight:bold;width:1%;">${etaDate}</td>
                 <td style="font-weight:600;white-space:nowrap;width:1%;">${r.vessel || '-'}</td>
                 <td style="text-align:center;width:1%;">${r.port || '-'}</td>
                 <td style="text-align:center;color:#f59e0b;font-weight:bold;width:1%;">${r.dis || '-'}</td>
@@ -2924,21 +3259,31 @@ class BayplanSimulator {
     async exportHistoryCSV() {
         const history = await this.getHistory();
         if (history.length === 0) { alert('No history records to export.'); return; }
-        const headers = ['Date', 'Vessel/Voy', 'Port', 'D', 'L', 'Twin', 'Restow', 'Berth(h)', 'Gang', 'Productivity', 'Memo', 'Total Size'];
-        const rows = history.map(r => [
-            r.date,
-            r.vessel,
-            r.port,
-            r.dis,
-            r.lod,
-            r.twin,
-            r.restow,
-            r.berth,
-            r.gang,
-            r.prod,
-            r.memo,
-            this._fmtBytes((r.metaSize || 0) + (r.payloadSize || 0))
-        ]);
+        const headers = ['Date(Created)', 'ETA(ATB)', 'Vessel/Voy', 'Port', 'D', 'L', 'Twin', 'Restow', 'Berth(h)', 'Gang', 'Productivity', 'Memo', 'Total Size'];
+        const rows = history.map(r => {
+            let createdDate = '-';
+            if (r.timestamp && r.timestamp.seconds) {
+                const cd = new Date(r.timestamp.seconds * 1000);
+                const pad = n => String(n).padStart(2, '0');
+                createdDate = `${cd.getFullYear()}-${pad(cd.getMonth() + 1)}-${pad(cd.getDate())} ${pad(cd.getHours())}:${pad(cd.getMinutes())}`;
+            } else if (r.date) { createdDate = r.date; }
+
+            return [
+                createdDate,
+                r.date || '',
+                r.vessel,
+                r.port,
+                r.dis,
+                r.lod,
+                r.twin,
+                r.restow,
+                r.berth,
+                r.gang,
+                r.prod,
+                r.memo,
+                this._fmtBytes((r.metaSize || 0) + (r.payloadSize || 0))
+            ];
+        });
         const csv = [headers, ...rows].map(row => row.map(c => '"' + String(c || '').replace(/"/g, '""') + '"').join(',')).join('\n');
         const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
@@ -3336,6 +3681,143 @@ class BayplanSimulator {
                 <td>${r.a}</td><td>${r.b}</td><td>${r.c}</td><td>${r.d}</td><td>${r.e}</td>
             </tr>`;
         }).join('');
+    }
+
+    renderDailyChart(labels, dataMap) {
+        if (typeof Chart === 'undefined') return;
+        const ctxDaily = document.getElementById('dailyVolumeChart');
+        const ctxCumul = document.getElementById('cumulativeVolumeChart');
+        if (!ctxDaily || !ctxCumul) return;
+
+        if (window.dailyChart) window.dailyChart.destroy();
+        if (window.cumulativeChart) window.cumulativeChart.destroy();
+
+        const disFData = labels.map(l => dataMap[l].disF);
+        const disEData = labels.map(l => dataMap[l].disE);
+        const lodFData = labels.map(l => dataMap[l].lodF);
+        const lodEData = labels.map(l => dataMap[l].lodE);
+
+        let cDis = 0;
+        let cLod = 0;
+        const cumDisData = [];
+        const cumLodData = [];
+
+        labels.forEach(l => {
+            cDis += (dataMap[l].disF + dataMap[l].disE);
+            cLod += (dataMap[l].lodF + dataMap[l].lodE);
+            cumDisData.push(cDis);
+            cumLodData.push(cLod);
+        });
+
+        // 1. Daily Volume Chart
+        window.dailyChart = new Chart(ctxDaily, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Discharge FULL',
+                        data: disFData,
+                        borderColor: '#f97316',
+                        backgroundColor: '#f97316',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'Discharge EMPTY',
+                        data: disEData,
+                        borderColor: '#fcd34d',
+                        backgroundColor: '#fcd34d',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        tension: 0.3,
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'Load FULL',
+                        data: lodFData,
+                        borderColor: '#22c55e',
+                        backgroundColor: '#22c55e',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'Load EMPTY',
+                        data: lodEData,
+                        borderColor: '#86efac',
+                        backgroundColor: '#86efac',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        tension: 0.3,
+                        pointRadius: 4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#e2e8f0', font: { family: "'Inter', sans-serif" } } }
+                },
+                scales: {
+                    x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#94a3b8', stepSize: 50 },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        title: { display: true, text: 'Daily Count', color: '#94a3b8', font: { size: 10 } }
+                    }
+                }
+            }
+        });
+
+        // 2. Cumulative Volume Chart
+        window.cumulativeChart = new Chart(ctxCumul, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Cumulative Discharge',
+                        data: cumDisData,
+                        borderColor: '#fbbf24',
+                        backgroundColor: 'rgba(251, 191, 36, 0.2)',
+                        borderWidth: 3,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        fill: true
+                    },
+                    {
+                        label: 'Cumulative Load',
+                        data: cumLodData,
+                        borderColor: '#4ade80',
+                        backgroundColor: 'rgba(74, 222, 128, 0.2)',
+                        borderWidth: 3,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        fill: true
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#e2e8f0', font: { family: "'Inter', sans-serif" } } }
+                },
+                scales: {
+                    x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: '#fbbf24' },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        title: { display: true, text: 'Cumulative Volume', color: '#fbbf24', font: { size: 10 } }
+                    }
+                }
+            }
+        });
     }
 
 }

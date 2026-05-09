@@ -10,6 +10,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 
 <body>
@@ -334,7 +335,9 @@
 
             <!-- G/C Work Chart -->
             <div id="gcWorkChartContainer" style="margin-top:30px;">
-                <h4 style="color: var(--text-secondary); margin-bottom:10px; font-size:14px;">G/C Work Distribution</h4>
+                <h4 id="gcWorkDistTitle"
+                    style="color: var(--text-secondary); margin-bottom:10px; font-size:14px; display:flex; align-items:baseline; flex-wrap:wrap; gap:4px;">
+                    G/C Work Distribution</h4>
                 <div id="gcWorkChart"
                     style="position:relative; height:200px; background:rgba(0,0,0,0.1); border:1px solid var(--glass-border); border-radius:6px; overflow:hidden;">
                 </div>
@@ -418,8 +421,8 @@
                 </h3>
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;">
                     <div class="control-group" style="margin:0;">
-                        <label>Date</label>
-                        <input type="text" id="histDate" readonly
+                        <label>ETA (ATB)</label>
+                        <input type="text" id="histDate" placeholder="YYYYMMDD"
                             style="background:rgba(255,255,255,0.05);border:1px solid var(--glass-border);color:white;padding:8px;border-radius:6px;width:100%;">
                     </div>
                     <div class="control-group" style="margin:0;">
@@ -490,12 +493,14 @@
                 style="display:flex;align-items:center;gap:20px;padding:10px 14px;margin-bottom:10px;background:rgba(0,0,0,0.25);border-radius:8px;border:1px solid rgba(255,255,255,0.07);font-size:12px;">
                 <span style="color:var(--text-secondary);">Loading stats...</span>
             </div>
+
             <!-- History Table -->
-            <div style="overflow:auto;">
+            <div style="overflow:auto;margin-bottom:24px;">
                 <table class="list-table" id="historyTable" style="min-width:100%;">
                     <thead>
                         <tr>
                             <th style="width:1%;">Date</th>
+                            <th style="width:1%;">ETA(ATB)</th>
                             <th style="width:1%;">Vessel / Voy</th>
                             <th style="width:1%;">Port</th>
                             <th style="width:1%;">D</th>
@@ -514,6 +519,40 @@
                         <!-- Rows injected by JS -->
                     </tbody>
                 </table>
+            </div>
+
+            <!-- Daily Summary Panel -->
+            <div id="historySummaryPanel"
+                style="background:rgba(255,255,255,0.03);border:1px solid var(--glass-border);border-radius:12px;padding:20px;margin-bottom:24px;">
+                <h3 style="color:var(--accent-color);margin-bottom:16px;font-size:15px;">&#128200; Daily Volume Summary
+                </h3>
+                <!-- Top: Table -->
+                <div style="overflow-x:auto;margin-bottom:20px;">
+                    <table class="list-table" id="dailyVolumeTable" style="min-width:100%;">
+                        <thead>
+                            <tr>
+                                <th>Date (ETA)</th>
+                                <th>Discharge FULL</th>
+                                <th>Discharge EMPTY</th>
+                                <th style="color:#f59e0b;">Discharge (TEU)</th>
+                                <th>Load FULL</th>
+                                <th>Load EMPTY</th>
+                                <th style="color:#22c55e;">Load (TEU)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dailyVolumeBody"></tbody>
+                    </table>
+                </div>
+
+                <!-- Bottom: Charts -->
+                <div style="display:flex; flex-direction:column; gap:24px;">
+                    <div style="position:relative; height:240px; width:100%;">
+                        <canvas id="dailyVolumeChart"></canvas>
+                    </div>
+                    <div style="position:relative; height:240px; width:100%;">
+                        <canvas id="cumulativeVolumeChart"></canvas>
+                    </div>
+                </div>
             </div>
         </section>
 
