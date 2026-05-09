@@ -2904,6 +2904,45 @@ class BayplanSimulator {
         };
 
         try {
+            // 항상 F/E 및 20/40 TEU 갯수를 다시 계산합니다 (기존 기록 편집 시에도 반영)
+            let disF = 0, disE = 0, lodF = 0, lodE = 0;
+            let disF20 = 0, disF40 = 0, disE20 = 0, disE40 = 0;
+            let lodF20 = 0, lodF40 = 0, lodE20 = 0, lodE40 = 0;
+            let disTeu = 0, lodTeu = 0;
+
+            this.disContainers.forEach(c => {
+                if ((c.pod || c.port) === this.targetPort && !c.isRestow) {
+                    const is20 = c.size === 20;
+                    const teu = is20 ? 1 : 2;
+                    if (c.fullEmpty === 'E') {
+                        disE++; disTeu += teu;
+                        if (is20) disE20++; else disE40++;
+                    } else {
+                        disF++; disTeu += teu;
+                        if (is20) disF20++; else disF40++;
+                    }
+                }
+            });
+            this.lodContainers.forEach(c => {
+                if ((c.pol || c.port) === this.targetPort && !c.isRestow) {
+                    const is20 = c.size === 20;
+                    const teu = is20 ? 1 : 2;
+                    if (c.fullEmpty === 'E') {
+                        lodE++; lodTeu += teu;
+                        if (is20) lodE20++; else lodE40++;
+                    } else {
+                        lodF++; lodTeu += teu;
+                        if (is20) lodF20++; else lodF40++;
+                    }
+                }
+            });
+
+            // 계산된 값을 meta 데이터에 추가합니다.
+            meta.disF = disF; meta.disE = disE; meta.lodF = lodF; meta.lodE = lodE;
+            meta.disF20 = disF20; meta.disF40 = disF40; meta.disE20 = disE20; meta.disE40 = disE40;
+            meta.lodF20 = lodF20; meta.lodF40 = lodF40; meta.lodE20 = lodE20; meta.lodE40 = lodE40;
+            meta.disTeu = disTeu; meta.lodTeu = lodTeu;
+
             if (this.editingHistId) {
                 // Edit existing metadata only, preserve payload & IDs
                 meta.updatedAt = firebase.firestore.FieldValue.serverTimestamp();
@@ -2911,46 +2950,11 @@ class BayplanSimulator {
                 this.editingHistId = null;
                 alert('Record updated in Firebase!');
             } else {
-                // New record: calculate F/E and TEUs
-                let disF = 0, disE = 0, lodF = 0, lodE = 0;
-                let disF20 = 0, disF40 = 0, disE20 = 0, disE40 = 0;
-                let lodF20 = 0, lodF40 = 0, lodE20 = 0, lodE40 = 0;
-                let disTeu = 0, lodTeu = 0;
-                this.disContainers.forEach(c => {
-                    if ((c.pod || c.port) === this.targetPort && !c.isRestow) {
-                        const is20 = c.size === 20;
-                        const teu = is20 ? 1 : 2;
-                        if (c.fullEmpty === 'E') {
-                            disE++; disTeu += teu;
-                            if (is20) disE20++; else disE40++;
-                        } else {
-                            disF++; disTeu += teu;
-                            if (is20) disF20++; else disF40++;
-                        }
-                    }
-                });
-                this.lodContainers.forEach(c => {
-                    if ((c.pol || c.port) === this.targetPort && !c.isRestow) {
-                        const is20 = c.size === 20;
-                        const teu = is20 ? 1 : 2;
-                        if (c.fullEmpty === 'E') {
-                            lodE++; lodTeu += teu;
-                            if (is20) lodE20++; else lodE40++;
-                        } else {
-                            lodF++; lodTeu += teu;
-                            if (is20) lodF20++; else lodF40++;
-                        }
-                    }
-                });
-
+                // New record: calculate extra fields required for new creation
                 meta.vesselName = this.vessel;
                 meta.voyageName = this.voyage;
                 meta.allIds = [...this.disContainers.map(c => c.id.toUpperCase()), ...this.lodContainers.map(c => c.id.toUpperCase())];
                 meta.timestamp = firebase.firestore.FieldValue.serverTimestamp();
-                meta.disF = disF; meta.disE = disE; meta.lodF = lodF; meta.lodE = lodE;
-                meta.disF20 = disF20; meta.disF40 = disF40; meta.disE20 = disE20; meta.disE40 = disE40;
-                meta.lodF20 = lodF20; meta.lodF40 = lodF40; meta.lodE20 = lodE20; meta.lodE40 = lodE40;
-                meta.disTeu = disTeu; meta.lodTeu = lodTeu;
 
                 const metaSize = new Blob([JSON.stringify(meta)]).size;
                 meta.metaSize = metaSize;
