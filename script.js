@@ -411,8 +411,9 @@ class BayplanSimulator {
                 const typeCode = (parts[3] || '').split(':')[0].trim();
                 currentContainer.type = typeCode;
                 if (typeCode.startsWith('2')) currentContainer.size = 20;
+                else if (typeCode.startsWith('4')) currentContainer.size = 40;
                 else if (typeCode.startsWith('L') || typeCode.startsWith('l')) currentContainer.size = 45;
-                else currentContainer.size = 40;
+                else currentContainer.size = 40; // Fallback to 40 if unknown starting char
                 // Last element: 5 = Full, 4 = Empty
                 const last = (parts[parts.length - 1] || '').trim();
                 currentContainer.fullEmpty = last === '5' ? 'F' : last === '4' ? 'E' : '?';
@@ -2805,29 +2806,51 @@ class BayplanSimulator {
             // Migration for legacy records missing F/E stats
             let migrationPromises = [];
             for (let doc of docs) {
-                if (doc.disF === undefined && (doc.payloadPath || doc.payloadUrl)) {
+                if (doc.disF20 === undefined && (doc.payloadPath || doc.payloadUrl)) {
                     migrationPromises.push((async () => {
                         try {
                             const payload = await this._loadPayloadFromStorage(doc.payloadPath || `bayplanPayload/${doc.id}.json`);
 
                             let disF = 0, disE = 0, lodF = 0, lodE = 0;
+                            let disF20 = 0, disF40 = 0, disE20 = 0, disE40 = 0;
+                            let lodF20 = 0, lodF40 = 0, lodE20 = 0, lodE40 = 0;
                             let disTeu = 0, lodTeu = 0;
                             const targetPort = doc.port;
 
                             (payload.disData || []).forEach(c => {
                                 if ((c.pod || c.port) === targetPort && !c.isRestow) {
-                                    const teu = parseInt(c.size) === 20 ? 1 : 2;
-                                    if (c.fullEmpty === 'E') { disE++; disTeu += teu; } else { disF++; disTeu += teu; }
+                                    const is20 = parseInt(c.size) === 20;
+                                    const teu = is20 ? 1 : 2;
+                                    if (c.fullEmpty === 'E') {
+                                        disE++;
+                                        if (is20) disE20++; else disE40++;
+                                    } else {
+                                        disF++;
+                                        if (is20) disF20++; else disF40++;
+                                    }
+                                    disTeu += teu;
                                 }
                             });
                             (payload.lodData || []).forEach(c => {
                                 if ((c.pol || c.port) === targetPort && !c.isRestow) {
-                                    const teu = parseInt(c.size) === 20 ? 1 : 2;
-                                    if (c.fullEmpty === 'E') { lodE++; lodTeu += teu; } else { lodF++; lodTeu += teu; }
+                                    const is20 = parseInt(c.size) === 20;
+                                    const teu = is20 ? 1 : 2;
+                                    if (c.fullEmpty === 'E') {
+                                        lodE++;
+                                        if (is20) lodE20++; else lodE40++;
+                                    } else {
+                                        lodF++;
+                                        if (is20) lodF20++; else lodF40++;
+                                    }
+                                    lodTeu += teu;
                                 }
                             });
 
-                            const updates = { disF, disE, lodF, lodE, disTeu, lodTeu };
+                            const updates = {
+                                disF, disE, lodF, lodE, disTeu, lodTeu,
+                                disF20, disF40, disE20, disE40,
+                                lodF20, lodF40, lodE20, lodE40
+                            };
                             await window.db.collection('bayplanHistory').doc(doc.id).update(updates);
                             Object.assign(doc, updates);
                         } catch (e) {
@@ -2904,6 +2927,7 @@ class BayplanSimulator {
         };
 
         try {
+            const histPortVal = document.getElementById('histPort').value;
             // 항상 F/E 및 20/40 TEU 갯수를 다시 계산합니다 (기존 기록 편집 시에도 반영)
             let disF = 0, disE = 0, lodF = 0, lodE = 0;
             let disF20 = 0, disF40 = 0, disE20 = 0, disE40 = 0;
@@ -2911,7 +2935,7 @@ class BayplanSimulator {
             let disTeu = 0, lodTeu = 0;
 
             this.disContainers.forEach(c => {
-                if ((c.pod || c.port) === this.targetPort && !c.isRestow) {
+                if ((c.pod || c.port) === histPortVal && !c.isRestow) {
                     const is20 = c.size === 20;
                     const teu = is20 ? 1 : 2;
                     if (c.fullEmpty === 'E') {
@@ -2924,7 +2948,7 @@ class BayplanSimulator {
                 }
             });
             this.lodContainers.forEach(c => {
-                if ((c.pol || c.port) === this.targetPort && !c.isRestow) {
+                if ((c.pol || c.port) === histPortVal && !c.isRestow) {
                     const is20 = c.size === 20;
                     const teu = is20 ? 1 : 2;
                     if (c.fullEmpty === 'E') {
