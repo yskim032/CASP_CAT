@@ -272,15 +272,15 @@ button:hover {
     opacity: 0.75;
 }
 
-/* Center row 01 - full column highlight */
-.slot.center-col {
-    background: rgba(160, 160, 160, 0.18);
-    border-color: rgba(120, 120, 120, 0.2);
+/* Innermost rows 02(port) and 01(stbd) - highlight empty cells */
+.slot.center-col:not(.occupied) {
+    background: rgba(140, 140, 140, 0.32);
+    border-color: rgba(100, 100, 100, 0.3);
 }
 
 .slot.center-col.occupied {
-    /* occupied slots keep their color, just add subtle border */
-    border-color: rgba(100, 100, 100, 0.35);
+    /* occupied slots keep their container color, just add subtle border */
+    border-color: rgba(80, 80, 80, 0.45);
 }
 
 /* Tier number labels (right side of each row) */
@@ -307,12 +307,12 @@ button:hover {
     /* horizontal – no rotation */
 }
 
-/* Center row 01 label */
+/* Innermost row labels: 02 and 01 */
 .row-label.center-row {
     color: #000;
     font-weight: 900;
     font-size: 9px;
-    background: rgba(150, 150, 150, 0.3);
+    background: rgba(120, 120, 120, 0.38);
     border-radius: 2px;
 }
 

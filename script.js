@@ -75,6 +75,7 @@ class BayplanSimulator {
         this.searchedIds = new Set(); // All IDs from last search
         this.selectedContainerId = null; // Specific focus from info panel
         this.activeSimMode = 'A'; // Tracks simulation tab (Mode A or B)
+        this.hasRow00 = false; // Auto-detected: true if any container uses ROW 00 position
 
         this.initEventListeners();
     }
@@ -514,6 +515,10 @@ class BayplanSimulator {
     updateUI() {
         this.processRestows();
         this.updateOperatorList();
+        // Auto-detect ROW 00 type: if any container sits at row '00', use Type A layout
+        const allCtrs = [...this.disContainers, ...this.lodContainers];
+        this.hasRow00 = allCtrs.some(c => c.pos.substring(2, 4) === '00');
+        this.vesselProfile = null; // Reset so it recalculates with correct hasRow00
         this.renderRecap();
         this.renderGeneralStowage();
         if (this.currentListTab) this.renderContainerList(this.currentListTab);
@@ -776,10 +781,20 @@ class BayplanSimulator {
     }
 
     getRowIdx(row) {
-        // Center 01 -> 15. Even (Left) 02, 04 -> 14, 13. Odd (Right) 03, 05 -> 16, 17
-        if (row === 1) return 15;
-        if (row % 2 === 0) return 15 - (row / 2);
-        return 15 + Math.floor(row / 2);
+        if (this.hasRow00) {
+            // Type A: ROW 00 = center (index 15)
+            // Even rows (02,04...) = port/left:  02->14, 04->13 ...
+            // Odd  rows (01,03...) = stbd/right: 01->16, 03->17 ...
+            if (row === 0) return 15;
+            if (row % 2 === 0) return 15 - (row / 2);
+            return 15 + Math.ceil(row / 2);
+        } else {
+            // Type B: no ROW 00 — gap between ROW 02 (port) and ROW 01 (stbd)
+            // Even rows (02,04...) = port/left:  02->15, 04->14, 06->13 ...
+            // Odd  rows (01,03...) = stbd/right: 01->16, 03->17, 05->18 ...
+            if (row % 2 === 0) return 16 - (row / 2);
+            return 15 + Math.ceil(row / 2);
+        }
     }
 
     getTierIdx(tier, isOnDeck) {
@@ -851,7 +866,16 @@ class BayplanSimulator {
                 const rInt = parseInt(c.pos.substring(2, 4) || '0');
                 const tInt = parseInt(c.pos.substring(4, 6) || '0');
                 let off = 0;
-                if (rInt > 1) off = (rInt % 2 === 0) ? rInt / 2 : Math.floor(rInt / 2);
+                if (this.hasRow00) {
+                    // Type A: center=00(idx15). off = distance from idx 15
+                    if (rInt === 0) off = 0;
+                    else if (rInt % 2 === 0) off = rInt / 2;       // 02->1, 04->2
+                    else off = Math.ceil(rInt / 2);                  // 01->1, 03->2
+                } else {
+                    // Type B: innermost=02(idx15)/01(idx16). off = distance from idx 15
+                    if (rInt % 2 === 0) off = Math.max(0, rInt / 2 - 1);  // 02->0, 04->1
+                    else off = Math.ceil(rInt / 2);                          // 01->1, 03->2
+                }
                 if (off > maxROffset) maxROffset = off;
                 if (tInt >= 70) {
                     const tidx = Math.floor((tInt - 70) / 2);
@@ -1024,7 +1048,10 @@ class BayplanSimulator {
             for (let r = rStart; r <= rEnd; r++) {
                 const rowCode = this.colIdxToRowCode(r);
                 const slot = document.createElement('div');
-                slot.className = 'slot' + (rowCode === '01' ? ' center-col' : '');
+                const isCenterCol = this.hasRow00
+                    ? (rowCode === '00')
+                    : (rowCode === '01' || rowCode === '02');
+                slot.className = 'slot' + (isCenterCol ? ' center-col' : '');
                 const found = this.checkAndFillSlot(slot, bayCode, r, t, isHold);
                 if (found) {
                     slot.style.cursor = 'pointer';
@@ -1048,7 +1075,10 @@ class BayplanSimulator {
         for (let r = rStart; r <= rEnd; r++) {
             const code = this.colIdxToRowCode(r);
             const rowLbl = document.createElement('div');
-            rowLbl.className = 'row-label' + (code === '01' ? ' center-row' : '');
+            const isCenterRow = this.hasRow00
+                ? (code === '00')
+                : (code === '01' || code === '02');
+            rowLbl.className = 'row-label' + (isCenterRow ? ' center-row' : '');
             rowLbl.textContent = code;
             grid.appendChild(rowLbl);
         }
@@ -1058,11 +1088,18 @@ class BayplanSimulator {
         return wrapper;
     }
 
-    // Convert grid column index (0-29) to maritime row code string
+    // Convert grid column index to maritime row code string
     colIdxToRowCode(r) {
-        if (r === 15) return '01';
-        if (r < 15) return ((15 - r) * 2).toString().padStart(2, '0');       // port  02,04…
-        return ((r - 15) * 2 + 1).toString().padStart(2, '0');                   // stbd  03,05…
+        if (this.hasRow00) {
+            // Type A: r=15 → ROW 00 (center), port=even left, stbd=odd right
+            if (r === 15) return '00';
+            if (r < 15) return ((15 - r) * 2).toString().padStart(2, '0');    // 14->02, 13->04
+            return ((r - 15) * 2 - 1).toString().padStart(2, '0');             // 16->01, 17->03
+        } else {
+            // Type B: r=15 → ROW 02 (innermost port), r=16 → ROW 01 (innermost stbd)
+            if (r <= 15) return ((16 - r) * 2).toString().padStart(2, '0');   // 15->02, 14->04
+            return ((r - 15) * 2 - 1).toString().padStart(2, '0');             // 16->01, 17->03
+        }
     }
 
     // Show container details in the info panel
